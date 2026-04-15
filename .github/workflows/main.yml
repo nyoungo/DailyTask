@@ -28,12 +28,18 @@ jobs:
       run: chmod +x ./gradlew
 
     - name: Build APK
-      run: ./gradlew assembleRelease
+      run: ./gradlew assembleRelease --info
 
     - name: Get version name
       id: get_version
       run: |
-        VERSION_NAME=$(grep -E 'versionName\s+\'[^\']+\''|versionName\s+"[^"]+"' app/build.gradle | head -1 | sed -E "s/.*versionName\s+['\"]([^'\"]+)['\"].*/\1/")
+        # 直接从build.gradle文件中提取版本号
+        VERSION_NAME=$(grep -E 'versionName\s+["\']([^"\']+)["\']' app/build.gradle | head -1 | sed -E 's/.*versionName\s+["\']([^"\']+)["\']/\1/')
+        # 如果版本号提取失败，使用默认值
+        if [ -z "$VERSION_NAME" ]; then
+          VERSION_NAME="2.3.1.0"
+          echo "Warning: Failed to extract version name, using default: $VERSION_NAME"
+        fi
         TIMESTAMP=$(date +"%Y%m%d%H%M%S")
         echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
         echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
@@ -42,8 +48,12 @@ jobs:
     - name: Check build outputs
       run: |
         ls -la
-        ls -la app/build/outputs/apk/
+        ls -la app/build/
+        ls -la app/build/outputs/
+        ls -la app/build/outputs/apk/ || echo "APK directory not found"
         ls -la app/build/outputs/apk/release/ || echo "Release directory not found"
+        find app/build -name "*.apk" -type f || echo "No APK files found"
+        echo "Current directory: $(pwd)"
 
     - name: Create Release
       id: create_release
@@ -56,12 +66,19 @@ jobs:
         draft: false
         prerelease: false
 
+    - name: Find APK file
+      id: find_apk
+      run: |
+        APK_FILE=$(find app/build -name "*.apk" -type f | head -1)
+        echo "apk_file=$APK_FILE" >> $GITHUB_OUTPUT
+        echo "Found APK: $APK_FILE"
+
     - name: Upload APK to Release
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: app/build/outputs/apk/release/*release*.apk
+        asset_path: ${{ steps.find_apk.outputs.apk_file }}
         asset_name: DailyTask-${{ steps.get_version.outputs.version_name }}-${{ steps.get_version.outputs.timestamp }}.apk
         asset_content_type: application/vnd.android.package-archive
