@@ -34,7 +34,10 @@ jobs:
       id: get_version
       run: |
         VERSION_NAME=$(grep -E 'versionName\s+\'[^\']+\''|versionName\s+"[^"]+"' app/build.gradle | head -1 | sed -E "s/.*versionName\s+['\"]([^'\"]+)['\"].*/\1/")
+        TIMESTAMP=$(date +"%Y%m%d%H%M%S")
         echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+        echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+        echo "unique_tag=v${VERSION_NAME}-${TIMESTAMP}" >> $GITHUB_OUTPUT
 
     - name: Check build outputs
       run: |
@@ -48,8 +51,8 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: v${{ steps.get_version.outputs.version_name }}
-        release_name: Release v${{ steps.get_version.outputs.version_name }}
+        tag_name: ${{ steps.get_version.outputs.unique_tag }}
+        release_name: Release ${{ steps.get_version.outputs.unique_tag }}
         draft: false
         prerelease: false
 
@@ -60,5 +63,5 @@ jobs:
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: app/build/outputs/apk/release/*release*.apk
-        asset_name: DailyTask-${{ steps.get_version.outputs.version_name }}.apk
+        asset_name: DailyTask-${{ steps.get_version.outputs.version_name }}-${{ steps.get_version.outputs.timestamp }}.apk
         asset_content_type: application/vnd.android.package-archive
