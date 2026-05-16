@@ -70,6 +70,7 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
 
     override fun onCreate() {
         super.onCreate()
+        EventBus.getDefault().register(this)
         val name = "${resources.getString(R.string.app_name)}截屏服务"
         val channel = NotificationChannel(
             "capture_image_service_channel", name, NotificationManager.IMPORTANCE_LOW
@@ -91,8 +92,6 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
         } else {
             startForeground(Constant.CAPTURE_IMAGE_SERVICE_NOTIFICATION_ID, notification)
         }
-
-        EventBus.getDefault().register(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -127,12 +126,14 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
                 override fun onStop() {
                     super.onStop()
                     ProjectionSession.markStoppedNeedAuth()
+                    SaveKeyValues.putValue(Constant.RESULT_SOURCE_KEY, 0)
                 }
             }, null)
 
             ProjectionSession.setProjection(projection)
             Log.d(kTag, "MediaProjection created successfully")
             EventBus.getDefault().post(ApplicationEvent.ProjectionReady)
+            SaveKeyValues.putValue(Constant.RESULT_SOURCE_KEY, 1)
         } catch (e: Exception) {
             Log.w(kTag, "createMediaProjection failed: ${e.message}", e)
             EventBus.getDefault().post(ApplicationEvent.ProjectionFailed)
@@ -150,8 +151,8 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
     }
 
     private fun captureScreen() {
-        if (ProjectionSession.state != ProjectionSession.State.ACTIVE) {
-            sendChannelMessage("MediaProjection not active. state=${ProjectionSession.state}")
+        if (!ProjectionSession.isStateActive()) {
+            sendChannelMessage("MediaProjection not active. state=${ProjectionSession.getState()}")
             return
         }
 
@@ -166,8 +167,9 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
         val height = metrics.heightPixels
         val density = metrics.densityDpi
 
-        runCatching { imageReader?.close() }
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        releaseCaptureResources()
+        val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        imageReader = reader
         launch {
             try {
                 virtualDisplay = projection.createVirtualDisplay(
@@ -176,14 +178,14 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
                     height,
                     density,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR or DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
-                    imageReader?.surface,
+                    reader.surface,
                     null,
                     null
                 )
 
                 // 最多等待2秒
                 val image = withTimeoutOrNull(2000) {
-                    imageReader?.let { waitForImageAvailable(it) }
+                    waitForImageAvailable(reader)
                 }
 
                 if (image == null) {
@@ -210,7 +212,17 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
                 // 只取中间那部分截图
                 val y = (cropped.height * 0.2f).toInt()
                 val halfHeight = y + cropped.height / 2
-                val topHalf = Bitmap.createBitmap(cropped, 0, y, cropped.width, halfHeight)
+
+                // 边界检查
+                val validY = y.coerceAtLeast(0).coerceAtMost(cropped.height - 1)
+                val validHeight = halfHeight.coerceAtLeast(1).coerceAtMost(cropped.height - validY)
+                val topHalf = if (validY >= 0 && validHeight > 0
+                    && validY + validHeight <= cropped.height
+                ) {
+                    Bitmap.createBitmap(cropped, 0, validY, cropped.width, validHeight)
+                } else {
+                    cropped
+                }
 
                 val imagePath = "${createImageFileDir()}/${dateTimeFormat.format(Date())}.png"
                 topHalf.saveImage(imagePath)
@@ -223,6 +235,8 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
                 EventBus.getDefault().post(ApplicationEvent.ProjectionFailed)
             } catch (e: Exception) {
                 sendChannelMessage("截屏失败: ${e.message}")
+            } finally {
+                releaseCaptureResources()
             }
         }
     }
@@ -232,8 +246,12 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
             val listener = ImageReader.OnImageAvailableListener { reader ->
                 val image = reader.acquireLatestImage()
                 if (image != null) {
-                    continuation.resume(image)
-                    imageReader.setOnImageAvailableListener(null, null)
+                    reader.setOnImageAvailableListener(null, null)
+                    if (continuation.isActive) {
+                        continuation.resume(image)
+                    } else {
+                        image.close()
+                    }
                 }
             }
 
@@ -246,7 +264,7 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
     }
 
     private fun sendChannelMessage(content: String) {
-        val type = SaveKeyValues.getValue(Constant.CHANNEL_TYPE_KEY, -1) as Int
+        val type = SaveKeyValues.getValue(Constant.CHANNEL_TYPE_KEY, 0) as Int
         when (type) {
             0 -> httpRequestManager.sendMessage("截屏失败", content)
             1 -> emailManager.sendEmail("截屏失败", content, false)
@@ -256,12 +274,21 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
 
     override fun onDestroy() {
         super.onDestroy()
-        EventBus.getDefault().unregister(this)
+        Log.d(kTag, "CaptureImageService 被销毁，清理 MediaProjection")
+        EventBus.getDefault().post(ApplicationEvent.ProjectionDestroyed)
         cancel()
-        runCatching { virtualDisplay?.release() }
-        runCatching { imageReader?.close() }
+        releaseCaptureResources()
         ProjectionSession.clear()
+        SaveKeyValues.putValue(Constant.RESULT_SOURCE_KEY, 0)
         stopForeground(STOP_FOREGROUND_REMOVE)
+        EventBus.getDefault().unregister(this)
+    }
+
+    private fun releaseCaptureResources() {
+        runCatching { virtualDisplay?.release() }
+        virtualDisplay = null
+        runCatching { imageReader?.close() }
+        imageReader = null
     }
 
     override fun onBind(p0: Intent?): IBinder? {

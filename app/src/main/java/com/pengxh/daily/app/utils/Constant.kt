@@ -12,6 +12,7 @@ object Constant {
     // SharedPreferences 键
     // ============================================================
     const val RESET_TIME_KEY = "RESET_TIME_KEY"
+    const val LAST_RESET_DATE_KEY = "LAST_RESET_DATE_KEY"
     const val STAY_DD_TIMEOUT_KEY = "STAY_DD_TIMEOUT_KEY"
     const val GESTURE_DETECTOR_KEY = "GESTURE_DETECTOR_KEY"
     const val BACK_TO_HOME_KEY = "BACK_TO_HOME_KEY"
@@ -24,6 +25,8 @@ object Constant {
     const val WX_WEB_HOOK_KEY = "WX_WEB_HOOK_KEY"
     const val CHANNEL_TYPE_KEY = "CHANNEL_TYPE_KEY"
     const val RESULT_SOURCE_KEY = "RESULT_SOURCE_KEY"
+    const val POWER_SAVE_MODE_KEY = "POWER_SAVE_MODE_KEY"
+    const val SKIP_CHINA_HOLIDAY_KEY = "SKIP_CHINA_HOLIDAY_KEY"
 
     // ============================================================
     // 目标应用

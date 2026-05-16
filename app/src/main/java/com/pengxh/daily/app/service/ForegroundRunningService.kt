@@ -7,13 +7,18 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.pengxh.daily.app.R
 import com.pengxh.daily.app.utils.AlarmScheduler
 import com.pengxh.daily.app.utils.ApplicationEvent
+import com.pengxh.daily.app.utils.ChinaHolidayRemoteUpdater
 import com.pengxh.daily.app.utils.Constant
+import com.pengxh.daily.app.utils.EmailManager
+import com.pengxh.daily.app.utils.HttpRequestManager
+import com.pengxh.daily.app.utils.LogFileManager
 import com.pengxh.kt.lite.utils.SaveKeyValues
 import org.greenrobot.eventbus.EventBus
 import org.greenrobot.eventbus.Subscribe
@@ -26,8 +31,15 @@ import java.util.Locale
  * */
 class ForegroundRunningService : Service() {
 
+    private val batteryManager by lazy { getSystemService(BatteryManager::class.java) }
+    private val httpRequestManager by lazy { HttpRequestManager(this) }
+    private val emailManager by lazy { EmailManager(this) }
+    private var lastRemindTime = 0L
+
     override fun onCreate() {
         super.onCreate()
+        EventBus.getDefault().register(this)
+
         val notificationManager = getSystemService(NotificationManager::class.java)
         val name = "${resources.getString(R.string.app_name)}前台服务"
         val channel = NotificationChannel(
@@ -52,14 +64,15 @@ class ForegroundRunningService : Service() {
         val notification = notificationBuilder.build()
         startForeground(Constant.FOREGROUND_RUNNING_SERVICE_NOTIFICATION_ID, notification)
 
-        val filter = IntentFilter(Intent.ACTION_TIME_TICK)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(timeTickReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(timeTickReceiver, filter)
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_TIME_TICK) // 每分钟广播
+            addAction(Intent.ACTION_BATTERY_CHANGED) // 电池状态改变广播
         }
-
-        EventBus.getDefault().register(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(systemBroadcastReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(systemBroadcastReceiver, filter)
+        }
 
         // 立即更新一次倒计时显示
         updateResetTimeView()
@@ -69,18 +82,25 @@ class ForegroundRunningService : Service() {
             Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR
         ) as Int
         AlarmScheduler.schedule(this, resetHour)
+
+        ChinaHolidayRemoteUpdater.refreshIfNeeded(this)
+
+        // 检查电量
+        checkLowBattery()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        checkLowBattery()
         return START_STICKY
     }
 
-    private val timeTickReceiver = object : BroadcastReceiver() {
+    private val systemBroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             intent?.action?.let {
-                if (it == Intent.ACTION_TIME_TICK) {
-                    // 仅更新倒计时显示，重置任务由 AlarmManager 负责
-                    updateResetTimeView()
+                when (it) {
+                    Intent.ACTION_TIME_TICK -> updateResetTimeView()
+
+                    Intent.ACTION_BATTERY_CHANGED -> checkLowBattery()
                 }
             }
         }
@@ -138,16 +158,35 @@ class ForegroundRunningService : Service() {
         return delta.toInt()
     }
 
+    private fun checkLowBattery() {
+        val battery = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        if (battery < 20) {
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastRemindTime < 5 * 60 * 1000) {
+                return
+            }
+
+            when (SaveKeyValues.getValue(Constant.CHANNEL_TYPE_KEY, 0) as Int) {
+                0 -> httpRequestManager.sendMessage("低电量提醒", "")
+                1 -> emailManager.sendEmail("低电量提醒", "", false)
+                else -> LogFileManager.writeLog("低电量提醒未发送，消息渠道未配置，当前电量：$battery%")
+            }
+            lastRemindTime = currentTime
+        } else {
+            // 电量恢复到20%以上，重置提醒时间
+            lastRemindTime = 0L
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
-        EventBus.getDefault().unregister(this)
-
         try {
-            unregisterReceiver(timeTickReceiver)
+            unregisterReceiver(systemBroadcastReceiver)
         } catch (e: Exception) {
             e.printStackTrace()
         }
 
+        EventBus.getDefault().unregister(this)
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
