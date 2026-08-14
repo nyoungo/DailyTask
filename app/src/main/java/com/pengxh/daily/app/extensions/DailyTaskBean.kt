@@ -3,29 +3,17 @@ package com.pengxh.daily.app.extensions
 import com.github.gzuliyujiang.wheelpicker.entity.TimeEntity
 import com.pengxh.daily.app.sqlite.bean.DailyTaskBean
 import com.pengxh.daily.app.utils.Constant
-import com.pengxh.daily.app.utils.TimeKit
 import com.pengxh.kt.lite.extensions.appendZero
 import com.pengxh.kt.lite.utils.SaveKeyValues
 import java.text.SimpleDateFormat
+import java.time.LocalDate
 import java.util.Locale
 import java.util.Random
 
 fun DailyTaskBean.convertToTimeEntity(): TimeEntity {
     val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA)
-    val date = dateFormat.parse("${TimeKit.getTodayDate()} ${this.time}")!!
+    val date = dateFormat.parse("${LocalDate.now()} ${this.time}")!!
     return TimeEntity.target(date)
-}
-
-fun DailyTaskBean.diffCurrent(): Pair<String, Int> {
-    val newTime = resolveExecutionTime()
-
-    //获取当前日期，计算时间差
-    val simpleDateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA)
-    val taskDateTime = "${TimeKit.getTodayDate()} $newTime"
-    val taskDate = simpleDateFormat.parse(taskDateTime) ?: return Pair(newTime, 0)
-    val currentMillis = System.currentTimeMillis()
-    val diffSeconds = (taskDate.time - currentMillis) / 1000
-    return Pair(newTime, diffSeconds.toInt())
 }
 
 fun DailyTaskBean.resolveExecutionTime(): String {
@@ -37,7 +25,7 @@ fun DailyTaskBean.resolveExecutionTime(): String {
 }
 
 private fun DailyTaskBean.resolveExecutionSeconds(): Int {
-    val needRandom = SaveKeyValues.getValue(Constant.RANDOM_TIME_KEY, true) as Boolean
+    val needRandom = SaveKeyValues.loadBoolean(Constant.RANDOM_TIME_KEY, true)
 
     //18:00:59
     val array = this.time.split(":")
@@ -45,10 +33,11 @@ private fun DailyTaskBean.resolveExecutionSeconds(): Int {
 
     // 随机时间
     if (needRandom) {
-        val minuteRange = SaveKeyValues.getValue(Constant.RANDOM_MINUTE_RANGE_KEY, 5) as Int
+        val minuteRange =
+            SaveKeyValues.loadInt(Constant.TIME_RANGE_KEY, Constant.DEFAULT_TIME_RANGE)
 
         // 生成随机种子, 保证每天的随机时间是一致的
-        val key = "${TimeKit.getTodayDate()}|$id|$time|$minuteRange"
+        val key = "${LocalDate.now()}|$id|$time|$minuteRange"
         val seed = key.hashCode().toLong()
         val random = Random(seed)
 

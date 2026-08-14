@@ -7,42 +7,79 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ServiceInfo
 import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.pengxh.daily.app.R
-import com.pengxh.daily.app.utils.AlarmScheduler
-import com.pengxh.daily.app.utils.ApplicationEvent
-import com.pengxh.daily.app.utils.ChinaHolidayRemoteUpdater
 import com.pengxh.daily.app.utils.Constant
-import com.pengxh.daily.app.utils.EmailManager
-import com.pengxh.daily.app.utils.HttpRequestManager
 import com.pengxh.daily.app.utils.LogFileManager
+import com.pengxh.daily.app.utils.MessageDispatcher
+import com.pengxh.daily.app.utils.TaskScheduler
 import com.pengxh.kt.lite.utils.SaveKeyValues
-import org.greenrobot.eventbus.EventBus
-import org.greenrobot.eventbus.Subscribe
-import org.greenrobot.eventbus.ThreadMode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
 /**
- * APP前台服务，降低APP被系统杀死的可能性
- * */
+ * APP 前台服务，降低 APP 被系统杀死的可能性。
+ * 同时托管 TaskScheduler 的协程作用域。
+ */
 class ForegroundRunningService : Service() {
 
+    companion object {
+        private val _notificationText = MutableSharedFlow<String>(extraBufferCapacity = 1)
+        val notificationText = _notificationText.asSharedFlow()
+
+        /**
+         * 更新通知文字
+         * */
+        fun emitNotificationText(text: String) {
+            _notificationText.tryEmit(text)
+        }
+
+        private val _resetTickTime = MutableSharedFlow<String>(replay = 1, extraBufferCapacity = 1)
+        val resetTickTime = _resetTickTime.asSharedFlow()
+
+        /**
+         * 更新任务重置时间倒计时文字
+         * */
+        fun emitResetTickTime(text: String) {
+            _resetTickTime.tryEmit(text)
+        }
+
+        private val _resetTaskTime = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+        val resetTaskTime = _resetTaskTime.asSharedFlow()
+
+        /**
+         * 更新任务重置时间点
+         * */
+        fun emitResetTaskTime() {
+            _resetTaskTime.tryEmit(Unit)
+        }
+    }
+
     private val batteryManager by lazy { getSystemService(BatteryManager::class.java) }
-    private val httpRequestManager by lazy { HttpRequestManager(this) }
-    private val emailManager by lazy { EmailManager(this) }
     private var lastRemindTime = 0L
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    private val notificationManager by lazy { getSystemService(NotificationManager::class.java) }
+    private lateinit var notificationBuilder: NotificationCompat.Builder
 
     override fun onCreate() {
         super.onCreate()
-        EventBus.getDefault().register(this)
+        // 注入协程作用域给 TaskScheduler
+        TaskScheduler.attach(serviceScope)
 
-        val notificationManager = getSystemService(NotificationManager::class.java)
         val name = "${resources.getString(R.string.app_name)}前台服务"
         val channel = NotificationChannel(
             "foreground_running_service_channel", name, NotificationManager.IMPORTANCE_LOW
@@ -50,7 +87,7 @@ class ForegroundRunningService : Service() {
             description = "Channel for Foreground Running Service"
         }
         notificationManager.createNotificationChannel(channel)
-        val notificationBuilder =
+        notificationBuilder =
             NotificationCompat.Builder(this, "foreground_running_service_channel").apply {
                 setSmallIcon(R.mipmap.ic_launcher)
                 setContentText("为保证程序正常运行，请勿移除此通知")
@@ -64,7 +101,31 @@ class ForegroundRunningService : Service() {
                 setVibrate(null) // 禁用振动
             }
         val notification = notificationBuilder.build()
-        startForeground(Constant.FOREGROUND_RUNNING_SERVICE_NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                Constant.FOREGROUND_RUNNING_SERVICE_NOTIFICATION_ID, notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            startForeground(Constant.FOREGROUND_RUNNING_SERVICE_NOTIFICATION_ID, notification)
+        }
+
+        serviceScope.launch {
+            notificationText.collect { text ->
+                val notification = notificationBuilder.apply {
+                    setContentText(text)
+                }.build()
+                notificationManager.notify(
+                    Constant.FOREGROUND_RUNNING_SERVICE_NOTIFICATION_ID, notification
+                )
+            }
+        }
+
+        serviceScope.launch {
+            resetTaskTime.collect {
+                updateResetTimeView()
+            }
+        }
 
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_TIME_TICK) // 每分钟广播
@@ -78,14 +139,6 @@ class ForegroundRunningService : Service() {
 
         // 立即更新一次倒计时显示
         updateResetTimeView()
-
-        // 每次 Service 启动时重新注册 Alarm
-        val resetHour = SaveKeyValues.getValue(
-            Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR
-        ) as Int
-        AlarmScheduler.schedule(this, resetHour)
-
-        ChinaHolidayRemoteUpdater.refreshIfNeeded(this)
 
         // 检查电量
         checkLowBattery()
@@ -111,25 +164,14 @@ class ForegroundRunningService : Service() {
         }
     }
 
-    @Suppress("unused")
-    @Subscribe(threadMode = ThreadMode.MAIN)
-    fun handleApplicationEvent(event: ApplicationEvent) {
-        if (event is ApplicationEvent.SetResetTaskTime) {
-            // 重新计算并更新倒计时显示
-            updateResetTimeView()
-        }
-    }
-
     private fun updateResetTimeView() {
-        val resetHour = SaveKeyValues.getValue(
-            Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR
-        ) as Int
+        val resetHour = SaveKeyValues.loadInt(Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR)
         val seconds = resetTaskSeconds(resetHour)
 
         val hours = seconds / 3600
         val minutes = (seconds % 3600) / 60
         val time = String.format(Locale.getDefault(), "%02d小时%02d分钟", hours, minutes)
-        EventBus.getDefault().post(ApplicationEvent.UpdateResetTickTime("${time}后刷新每日任务"))
+        emitResetTickTime("${time}后刷新每日任务")
     }
 
     private fun resetTaskSeconds(hour: Int): Int {
@@ -171,11 +213,7 @@ class ForegroundRunningService : Service() {
                 return
             }
 
-            when (SaveKeyValues.getValue(Constant.CHANNEL_TYPE_KEY, 0) as Int) {
-                0 -> httpRequestManager.sendMessage("低电量提醒", "")
-                1 -> emailManager.sendEmail("低电量提醒", "", false)
-                else -> LogFileManager.writeLog("低电量提醒未发送，消息渠道未配置，当前电量：$battery%")
-            }
+            MessageDispatcher.sendMessage("低电量提醒", "手机电量低于20%，请及时充电")
             lastRemindTime = currentTime
         } else {
             // 电量恢复到20%以上，重置提醒时间
@@ -185,21 +223,19 @@ class ForegroundRunningService : Service() {
 
     /**
      * 每分钟检查是否需要触发任务重置
-     * 作为 AlarmManager 的兜底，防止部分机型 Alarm 不触发导致任务不重置
+     * 作为协程 delay 的兜底，防止长时间运行后协程异常退出导致任务不重置
      */
     private fun checkAndTriggerReset() {
-        val resetHour = SaveKeyValues.getValue(
-            Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR
-        ) as Int
+        val resetHour = SaveKeyValues.loadInt(Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR)
         val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
 
-        // 只在 resetHour 这个小时内触发检查，避免每分钟都判断
-        if (currentHour != resetHour) {
+        // 只在 resetHour ~ resetHour+1 这个范围触发检查
+        if (currentHour !in resetHour..(resetHour + 1)) {
             return
         }
 
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date())
-        val lastResetDate = SaveKeyValues.getValue(Constant.LAST_RESET_DATE_KEY, "") as String
+        val lastResetDate = SaveKeyValues.loadString(Constant.LAST_RESET_DATE_KEY, "")
 
         // 今天已重置，跳过
         if (lastResetDate == today) {
@@ -207,17 +243,11 @@ class ForegroundRunningService : Service() {
         }
 
         // 标记今天已重置，防止重复触发
-        LogFileManager.writeLog("ForegroundRunningService 触发任务重置（Alarm兜底）")
-        SaveKeyValues.putValue(Constant.LAST_RESET_DATE_KEY, today)
-        SaveKeyValues.putValue(Constant.TASK_RUNNING_STATE_KEY, false)
+        SaveKeyValues.saveString(Constant.LAST_RESET_DATE_KEY, today)
 
-        // 重新注册 Alarm，防止之前的 Alarm 失效
-        AlarmScheduler.schedule(this, resetHour)
-
-        // 发送 ResetDailyTask 事件，触发任务重置
-        val autoStart = SaveKeyValues.getValue(Constant.TASK_AUTO_START_KEY, true) as Boolean
-        if (autoStart) {
-            EventBus.getDefault().postSticky(ApplicationEvent.ResetDailyTask)
+        // 任务重置
+        if (SaveKeyValues.loadBoolean(Constant.TASK_AUTO_RECYCLE_KEY, true)) {
+            TaskScheduler.startTask()
         }
     }
 
@@ -229,7 +259,15 @@ class ForegroundRunningService : Service() {
             e.printStackTrace()
         }
 
-        EventBus.getDefault().unregister(this)
+        // 还原通知文本
+        val notification = notificationBuilder.apply {
+            setContentText("为保证程序正常运行，请勿移除此通知")
+        }.build()
+        notificationManager.notify(
+            Constant.FOREGROUND_RUNNING_SERVICE_NOTIFICATION_ID, notification
+        )
+
+        serviceScope.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 

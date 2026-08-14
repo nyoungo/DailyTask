@@ -13,7 +13,6 @@
     <!-- 前台通知（通知栏常驻） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -22,10 +21,6 @@
         android:name="android.permission.QUERY_ALL_PACKAGES"
         android:maxSdkVersion="30"
         tools:ignore="QueryAllPackagesPermission" />
-
-    <!-- AlarmManager 精确闹钟权限（Android 12+） -->
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-
 
     <application
         android:name=".DailyTaskApplication"
@@ -49,17 +44,14 @@
         <activity android:name=".ui.SettingsActivity" />
         <activity android:name=".ui.MessageChannelActivity" />
         <activity android:name=".ui.TaskConfigActivity" />
+        <activity android:name=".ui.CommandActivity" />
         <activity android:name=".ui.QuestionAndAnswerActivity" />
 
         <service android:name=".service.FloatingWindowService" />
         <service
             android:name=".service.ForegroundRunningService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="background_keep_alive" />
-        </service>
+            android:foregroundServiceType="dataSync" />
         <service
             android:name=".service.NotificationMonitorService"
             android:enabled="true"
@@ -71,17 +63,9 @@
             </intent-filter>
         </service>
         <service
-            android:name=".service.CountDownTimerService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-        <service
             android:name=".service.CaptureImageService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
-
-        <receiver
-            android:name=".utils.TaskResetReceiver"
-            android:exported="false" />
     </application>
 
     <queries>

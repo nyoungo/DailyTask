@@ -2,18 +2,18 @@ package com.pengxh.daily.app.service
 
 import android.app.Notification
 import android.content.ComponentName
+import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.pengxh.daily.app.extensions.openApplication
 import com.pengxh.daily.app.sqlite.DatabaseWrapper
 import com.pengxh.daily.app.sqlite.bean.NotificationBean
-import com.pengxh.daily.app.ui.MainActivity
-import com.pengxh.daily.app.utils.ApplicationEvent
 import com.pengxh.daily.app.utils.Constant
-import com.pengxh.daily.app.utils.EmailManager
-import com.pengxh.daily.app.utils.HttpRequestManager
+import com.pengxh.daily.app.utils.MessageDispatcher
+import com.pengxh.daily.app.utils.MonitorEvent
 import com.pengxh.daily.app.utils.ProjectionSession
+import com.pengxh.daily.app.utils.TaskScheduler
 import com.pengxh.kt.lite.extensions.show
 import com.pengxh.kt.lite.extensions.timestampToCompleteDate
 import com.pengxh.kt.lite.utils.SaveKeyValues
@@ -21,9 +21,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.greenrobot.eventbus.EventBus
 
 /**
  * @description: 状态栏监听服务
@@ -32,10 +33,29 @@ import org.greenrobot.eventbus.EventBus
  * @date: 2019/12/25 23:17
  */
 class NotificationMonitorService : NotificationListenerService() {
+    companion object {
+        private val _events = MutableSharedFlow<MonitorEvent>(extraBufferCapacity = 2)
+        val events = _events.asSharedFlow()
+
+        /**
+         * 发送事件
+         */
+        fun emitMonitorEvent(event: MonitorEvent) {
+            _events.tryEmit(event)
+        }
+
+        private val _listenerState = MutableSharedFlow<Boolean>(replay = 1, extraBufferCapacity = 1)
+        val listenerState = _listenerState.asSharedFlow()
+
+        /**
+         * 发送监听状态
+         */
+        fun emitListenerState(connected: Boolean) {
+            _listenerState.tryEmit(connected)
+        }
+    }
 
     private val kTag = "MonitorService"
-    private val httpRequestManager by lazy { HttpRequestManager(this) }
-    private val emailManager by lazy { EmailManager(this) }
     private val auxiliaryApp = arrayOf(Constant.WECHAT, Constant.QQ, Constant.TIM, Constant.ZFB)
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var listenerConnected = false
@@ -45,7 +65,7 @@ class NotificationMonitorService : NotificationListenerService() {
      */
     override fun onListenerConnected() {
         listenerConnected = true
-        EventBus.getDefault().post(ApplicationEvent.ListenerConnected)
+        emitListenerState(true)
     }
 
     /**
@@ -64,21 +84,20 @@ class NotificationMonitorService : NotificationListenerService() {
         if (notice.isNullOrBlank()) {
             return
         }
-
         val targetApp = Constant.getTargetApp()
 
         // 保存指定包名的通知，其他的一律不保存
         saveTargetNotice(pkg, targetApp, title, notice)
 
-        // 目标应用打卡通知
-        val resultSource = SaveKeyValues.getValue(Constant.RESULT_SOURCE_KEY, 0) as Int
-        if (resultSource == 0) {
+        // 截屏模式选中 + 钉钉手动打卡 → 通知被第 99 行拦截，仅测试场景会出现
+        // 目标应用打卡通知，如果设置通知监听，那么结果来源只能选通知监听。
+        if (SaveKeyValues.loadInt(Constant.RESULT_SOURCE_KEY, Constant.DEFAULT_INDEX) == 0) {
             if (pkg == targetApp && notice.contains("成功")) {
-                EventBus.getDefault().post(ApplicationEvent.GoBackMainActivity)
+                emitMonitorEvent(MonitorEvent.ClockInSuccess)
                 "即将发送通知邮件，请注意查收".show(this)
                 val messageTitle =
-                    SaveKeyValues.getValue(Constant.MESSAGE_TITLE_KEY, "打卡结果通知") as String
-                sendChannelMessage(title.ifBlank { messageTitle }, notice)
+                    SaveKeyValues.loadString(Constant.MESSAGE_TITLE_KEY, "打卡结果通知")
+                MessageDispatcher.sendMessage(title.ifBlank { messageTitle }, notice)
             }
         }
 
@@ -105,105 +124,105 @@ class NotificationMonitorService : NotificationListenerService() {
         }
     }
 
+    /**
+     * 处理远程指令
+     */
     private fun handleRemoteCommand(pkg: String, notice: String) {
-        if (pkg in auxiliaryApp) {
-            when {
-                notice.contains("执行任务") -> {
-                    EventBus.getDefault().post(ApplicationEvent.StartDailyTask)
-                }
+        if (pkg !in auxiliaryApp) return
 
-                notice.contains("终止任务") -> {
-                    EventBus.getDefault().post(ApplicationEvent.StopDailyTask)
-                }
-
-                notice.contains("开启循环") -> {
-                    SaveKeyValues.putValue(Constant.TASK_AUTO_START_KEY, true)
-                    sendChannelMessage("循环任务状态通知", "循环任务状态已更新为：开启")
-                }
-
-                notice.contains("关闭循环") -> {
-                    SaveKeyValues.putValue(Constant.TASK_AUTO_START_KEY, false)
-                    sendChannelMessage("循环任务状态通知", "循环任务状态已更新为：关闭")
-                }
-
-                notice.contains("息屏") -> {
-                    EventBus.getDefault().post(ApplicationEvent.ShowMaskView)
-                }
-
-                notice.contains("亮屏") -> {
-                    EventBus.getDefault().post(ApplicationEvent.HideMaskView)
-                }
-
-                notice.contains("考勤记录") -> {
-                    serviceScope.launch {
-                        val notices = try {
-                            DatabaseWrapper.loadCurrentDayNotice()
-                        } catch (e: Exception) {
-                            Log.e(kTag, "Load notices failed", e)
-                            emptyList()
-                        }
-
-                        val record = buildString {
-                            var index = 1
-                            notices.filter {
-                                it.noticeMessage.contains("考勤打卡")
-                            }.forEach {
-                                append("【第${index}次】${it.noticeMessage}，时间：${it.postTime}\r\n")
-                                index++
-                            }
-                        }
-
-                        withContext(Dispatchers.Main) {
-                            sendChannelMessage("当天考勤记录通知", record)
-                        }
-                    }
-                }
-
-                notice.contains("状态查询") -> {
-                    val type = SaveKeyValues.getValue(Constant.CHANNEL_TYPE_KEY, 0) as Int
-                    val content = buildString {
-                        appendLine("任务状态：${if (MainActivity.isTaskStarted) "运行中" else "已停止"}")
-                        appendLine("悬浮权限：${if (MainActivity.isCanDrawOverlay) "已获取" else "被拒绝"}")
-                        appendLine("通知监听：${if (listenerConnected) "正常" else "断开"}")
-                        appendLine("截图服务：${if (ProjectionSession.isStateActive()) "正常" else "断开"}")
-                        append("消息渠道：${if (type == 0) "企业微信" else "QQ邮箱"}")
-                    }
-                    sendChannelMessage("状态查询通知", content)
-                }
-
-                notice.contains("截屏") -> {
-                    if (ProjectionSession.isStateActive()) {
-                        openApplication()
-                    } else {
-                        sendChannelMessage("截屏状态通知", "截屏服务已断开，截屏失败")
-                    }
-                }
-
-                else -> {
-                    val key = SaveKeyValues.getValue(Constant.TASK_COMMAND_KEY, "打卡") as String
-                    if (notice.contains(key)) {
-                        openApplication(true)
-                    }
-                }
-            }
+        Log.d(kTag, "handleRemoteCommand: notice = $notice")
+        val prefixIndex = notice.indexOf(Constant.COMMAND_PREFIX)
+        if (prefixIndex < 0) {
+            Log.d(kTag, "handleRemoteCommand: 未检测到 DT# 指令前缀")
+            return
         }
-    }
 
-    private fun sendChannelMessage(title: String, content: String) {
-        val type = SaveKeyValues.getValue(Constant.CHANNEL_TYPE_KEY, 0) as Int
-        when (type) {
-            0 -> {
-                // 企业微信
-                httpRequestManager.sendMessage(title, content)
+        // 折叠通知格式形如 "[n条]昵称: DT#执行任务"，截取 DT# 之后的真正指令
+        val command = notice.substring(prefixIndex)
+        Log.d(kTag, "handleRemoteCommand: command = $command")
+
+        when {
+            command.contains("执行任务") -> emitMonitorEvent(MonitorEvent.StartTaskCommand)
+
+            command.contains("终止任务") -> emitMonitorEvent(MonitorEvent.StopTaskCommand)
+
+            command.contains("开启循环") -> {
+                SaveKeyValues.saveBoolean(Constant.TASK_AUTO_RECYCLE_KEY, true)
+                MessageDispatcher.sendMessage("循环任务状态通知", "循环任务状态已更新为：开启")
             }
 
-            1 -> {
-                // QQ邮箱
-                emailManager.sendEmail(title, content, false)
+            command.contains("关闭循环") -> {
+                SaveKeyValues.saveBoolean(Constant.TASK_AUTO_RECYCLE_KEY, false)
+                MessageDispatcher.sendMessage("循环任务状态通知", "循环任务状态已更新为：关闭")
+            }
+
+            command.contains("息屏") -> emitMonitorEvent(MonitorEvent.ShowMaskCommand)
+
+            command.contains("亮屏") -> emitMonitorEvent(MonitorEvent.HideMaskCommand)
+
+            command.contains("考勤记录") -> {
+                serviceScope.launch {
+                    val notices = try {
+                        DatabaseWrapper.loadCurrentDayNotice()
+                    } catch (e: Exception) {
+                        Log.e(kTag, "Load notices failed", e)
+                        emptyList()
+                    }
+
+                    val record = buildString {
+                        var index = 1
+                        notices.filter {
+                            it.noticeMessage.contains("考勤打卡")
+                        }.forEach {
+                            append("【第${index}次】${it.noticeMessage}，时间：${it.postTime}\r\n")
+                            index++
+                        }
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        MessageDispatcher.sendMessage("当天考勤记录通知", record)
+                    }
+                }
+            }
+
+            command.contains("状态查询") -> {
+                val type = SaveKeyValues.loadInt(Constant.MSG_CHANNEL_KEY, Constant.DEFAULT_INDEX)
+                val content = buildString {
+                    appendLine("任务状态：${if (TaskScheduler.isRunning()) "运行中" else "已停止"}")
+                    appendLine("悬浮权限：${if (Settings.canDrawOverlays(this@NotificationMonitorService)) "已获取" else "被拒绝"}")
+                    appendLine("通知监听：${if (listenerConnected) "正常" else "断开"}")
+                    appendLine("截图服务：${if (ProjectionSession.isStateActive()) "正常" else "断开"}")
+                    append("消息渠道：${if (type == 0) "QQ邮箱" else "企业微信"}")
+                }
+                MessageDispatcher.sendMessage("状态查询通知", content)
+            }
+
+            command.contains("截屏") -> {
+                if (ProjectionSession.isStateActive()) {
+                    openApplication { emitMonitorEvent(MonitorEvent.AppOpenedForScreenshot) }
+                } else {
+                    MessageDispatcher.sendMessage("截屏状态通知", "截屏服务已断开，截屏失败")
+                }
             }
 
             else -> {
-                Log.d(kTag, "sendChannelMessage: 消息渠道不支持")
+                // 自定义打卡指令，用户可配置关键词（如 "打卡"），同样需要 DT# 前缀
+                val key = SaveKeyValues.loadString(Constant.REMOTE_COMMAND_KEY, "打卡")
+                if (notice.contains(key)) {
+                    val timeoutSeconds = SaveKeyValues.loadInt(
+                        Constant.STAY_OVERTIME_KEY, Constant.DEFAULT_OVER_TIME
+                    )
+                    val returnScreenshot = SaveKeyValues.loadBoolean(
+                        Constant.REMOTE_CLOCK_IN_CAPTURE_KEY, false
+                    )
+                    openApplication {
+                        emitMonitorEvent(
+                            MonitorEvent.AppOpenedForRemoteClockIn(
+                                timeoutSeconds, returnScreenshot
+                            )
+                        )
+                    }
+                }
             }
         }
     }
@@ -215,7 +234,7 @@ class NotificationMonitorService : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         listenerConnected = false
-        EventBus.getDefault().post(ApplicationEvent.ListenerDisconnected)
+        emitListenerState(false)
         // 主动请求系统重新绑定监听服务
         requestRebind(ComponentName(this, NotificationMonitorService::class.java))
     }

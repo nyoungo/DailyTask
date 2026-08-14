@@ -3,25 +3,24 @@ package com.pengxh.daily.app.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
-import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
 import android.view.View
-import androidx.core.graphics.toColorInt
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.pengxh.daily.app.R
 import com.pengxh.daily.app.databinding.ActivityTaskConfigBinding
 import com.pengxh.daily.app.extensions.isApplicationExist
 import com.pengxh.daily.app.model.ExportDataModel
+import com.pengxh.daily.app.service.ForegroundRunningService
 import com.pengxh.daily.app.sqlite.DatabaseWrapper
 import com.pengxh.daily.app.sqlite.bean.DailyTaskBean
-import com.pengxh.daily.app.sqlite.bean.EmailConfigBean
-import com.pengxh.daily.app.utils.AlarmScheduler
-import com.pengxh.daily.app.utils.ApplicationEvent
-import com.pengxh.daily.app.utils.ChinaHolidayCalendar
-import com.pengxh.daily.app.utils.ChinaHolidayRemoteUpdater
+import com.pengxh.daily.app.utils.ConfigStore
 import com.pengxh.daily.app.utils.Constant
+import com.pengxh.daily.app.utils.CustomWorkdayManager
+import com.pengxh.daily.app.utils.FloatingWindowController
 import com.pengxh.kt.lite.base.KotlinBaseActivity
 import com.pengxh.kt.lite.extensions.convertColor
 import com.pengxh.kt.lite.extensions.isNumber
@@ -30,12 +29,10 @@ import com.pengxh.kt.lite.extensions.toJson
 import com.pengxh.kt.lite.utils.SaveKeyValues
 import com.pengxh.kt.lite.widget.dialog.AlertInputDialog
 import com.pengxh.kt.lite.widget.dialog.BottomActionSheet
-import org.greenrobot.eventbus.EventBus
-import org.greenrobot.eventbus.Subscribe
-import org.greenrobot.eventbus.ThreadMode
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.time.DayOfWeek
 
 class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
 
@@ -45,7 +42,6 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
     private val timeArray = arrayListOf("15", "30", "45", "自定义（单位：秒）")
     private val optionArray = arrayListOf("QQ", "微信", "TIM", "支付宝", "剪切板")
     private val clipboard by lazy { getSystemService(ClipboardManager::class.java) }
-    private val statusTimeFormat by lazy { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA) }
 
     override fun initViewBinding(): ActivityTaskConfigBinding {
         return ActivityTaskConfigBinding.inflate(layoutInflater)
@@ -65,35 +61,31 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
     }
 
     override fun initOnCreate(savedInstanceState: Bundle?) {
-        EventBus.getDefault().register(this)
-
-        val hour = SaveKeyValues.getValue(
-            Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR
-        ) as Int
+        val hour = SaveKeyValues.loadInt(Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR)
         binding.resetTimeView.text = "每天${hour}点"
-        val time = SaveKeyValues.getValue(
-            Constant.STAY_DD_TIMEOUT_KEY, Constant.DEFAULT_OVER_TIME
-        ) as Int
+
+        val time = SaveKeyValues.loadInt(Constant.STAY_OVERTIME_KEY, Constant.DEFAULT_OVER_TIME)
         binding.timeoutTextView.text = "${time}s"
-        binding.keyTextView.text =
-            SaveKeyValues.getValue(Constant.TASK_COMMAND_KEY, "打卡") as String
-        binding.autoTaskSwitch.isChecked = SaveKeyValues.getValue(
-            Constant.TASK_AUTO_START_KEY, true
-        ) as Boolean
-        binding.skipHolidaySwitch.isChecked = SaveKeyValues.getValue(
-            Constant.SKIP_CHINA_HOLIDAY_KEY, false
-        ) as Boolean
-        val needRandom = SaveKeyValues.getValue(Constant.RANDOM_TIME_KEY, true) as Boolean
+
+        binding.keyTextView.text = SaveKeyValues.loadString(Constant.REMOTE_COMMAND_KEY, "打卡")
+
+        updateCustomWorkdaySummary(CustomWorkdayManager.loadWorkdays())
+
+        binding.autoTaskSwitch.isChecked =
+            SaveKeyValues.loadBoolean(Constant.TASK_AUTO_RECYCLE_KEY, true)
+
+        binding.skipHolidaySwitch.isChecked =
+            SaveKeyValues.loadBoolean(Constant.SKIP_HOLIDAY_KEY, true)
+
+        val needRandom = SaveKeyValues.loadBoolean(Constant.RANDOM_TIME_KEY, true)
         binding.randomTimeSwitch.isChecked = needRandom
         if (needRandom) {
             binding.minuteRangeLayout.visibility = View.VISIBLE
-            val value = SaveKeyValues.getValue(Constant.RANDOM_MINUTE_RANGE_KEY, 5) as Int
+            val value = SaveKeyValues.loadInt(Constant.TIME_RANGE_KEY, Constant.DEFAULT_TIME_RANGE)
             binding.minuteRangeView.text = "${value}分钟"
         } else {
             binding.minuteRangeLayout.visibility = View.GONE
         }
-
-        updateHolidayDataStatus()
     }
 
     override fun initEvent() {
@@ -131,7 +123,7 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
                 .setOnDialogButtonClickListener(object :
                     AlertInputDialog.OnDialogButtonClickListener {
                     override fun onConfirmClick(value: String) {
-                        SaveKeyValues.putValue(Constant.TASK_COMMAND_KEY, value)
+                        SaveKeyValues.saveString(Constant.REMOTE_COMMAND_KEY, value)
                         binding.keyTextView.text = value
                     }
 
@@ -139,11 +131,16 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
                 }).build().show()
         }
 
+        binding.workdayLayout.setOnClickListener {
+            showWorkdaySelector()
+        }
+
         binding.randomTimeSwitch.setOnCheckedChangeListener { _, isChecked ->
-            SaveKeyValues.putValue(Constant.RANDOM_TIME_KEY, isChecked)
+            SaveKeyValues.saveBoolean(Constant.RANDOM_TIME_KEY, isChecked)
             if (isChecked) {
                 binding.minuteRangeLayout.visibility = View.VISIBLE
-                val value = SaveKeyValues.getValue(Constant.RANDOM_MINUTE_RANGE_KEY, 5) as Int
+                val value =
+                    SaveKeyValues.loadInt(Constant.TIME_RANGE_KEY, Constant.DEFAULT_TIME_RANGE)
                 binding.minuteRangeView.text = "${value}分钟"
             } else {
                 binding.minuteRangeLayout.visibility = View.GONE
@@ -151,11 +148,7 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
         }
 
         binding.skipHolidaySwitch.setOnCheckedChangeListener { _, isChecked ->
-            SaveKeyValues.putValue(Constant.SKIP_CHINA_HOLIDAY_KEY, isChecked)
-            updateHolidayDataStatus()
-            if (isChecked) {
-                ChinaHolidayRemoteUpdater.refreshIfNeeded(this)
-            }
+            SaveKeyValues.saveBoolean(Constant.SKIP_HOLIDAY_KEY, isChecked)
         }
 
         binding.minuteRangeLayout.setOnClickListener {
@@ -179,131 +172,119 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
                 }).build().show()
         }
 
-        binding.outputLayout.setOnClickListener {
+        binding.exportLayout.setOnClickListener {
             val exportData = ExportDataModel()
 
-            val taskBeans = DatabaseWrapper.loadAllTask()
-            if (taskBeans.isNotEmpty()) {
-                exportData.tasks = taskBeans
-            } else {
-                exportData.tasks = ArrayList<DailyTaskBean>()
+            // Int
+            exportData.resetTime =
+                SaveKeyValues.loadInt(Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR)
+            exportData.overtime =
+                SaveKeyValues.loadInt(Constant.STAY_OVERTIME_KEY, Constant.DEFAULT_OVER_TIME)
+            exportData.timeRange =
+                SaveKeyValues.loadInt(Constant.TIME_RANGE_KEY, Constant.DEFAULT_TIME_RANGE)
+            exportData.msgChannel =
+                SaveKeyValues.loadInt(Constant.MSG_CHANNEL_KEY, Constant.DEFAULT_INDEX)
+            exportData.targetApp = SaveKeyValues.loadInt(Constant.TARGET_APP_KEY, 0)
+
+            // String
+            exportData.remoteCommand = SaveKeyValues.loadString(Constant.REMOTE_COMMAND_KEY, "打卡")
+            exportData.msgTitle =
+                SaveKeyValues.loadString(Constant.MESSAGE_TITLE_KEY, "打卡结果通知")
+            exportData.wxKey = SaveKeyValues.loadString(Constant.WX_WEB_HOOK_KEY, "")
+            exportData.customWorkdays = CustomWorkdayManager.serializeWorkdays(
+                CustomWorkdayManager.loadWorkdays()
+            )
+
+            // Boolean
+            exportData.isDetectGesture =
+                SaveKeyValues.loadBoolean(Constant.GESTURE_DETECTOR_KEY, true)
+            exportData.isBackToHome = SaveKeyValues.loadBoolean(Constant.BACK_TO_HOME_KEY, false)
+            exportData.isAutoRecycle =
+                SaveKeyValues.loadBoolean(Constant.TASK_AUTO_RECYCLE_KEY, true)
+            exportData.isRandomTime = SaveKeyValues.loadBoolean(Constant.RANDOM_TIME_KEY, true)
+            exportData.isSkipHoliday = SaveKeyValues.loadBoolean(Constant.SKIP_HOLIDAY_KEY, true)
+            exportData.isSavePower =
+                SaveKeyValues.loadBoolean(Constant.POWER_SAVE_MODE_KEY, false)
+
+            // EmailConfig
+            val obj = ConfigStore.get().load(Constant.EMAIL_CONFIG_KEY)
+            if (!obj.isEmpty) {
+                val outbox = obj.get("outbox").asString
+                val authCode = obj.get("authCode").asString
+                val inbox = obj.get("inbox").asString
+                exportData.emailConfig = Triple(outbox, authCode, inbox)
             }
 
-            val title = SaveKeyValues.getValue(Constant.MESSAGE_TITLE_KEY, "打卡结果通知") as String
-            exportData.messageTitle = title
+            // TaskBeans
+            lifecycleScope.launch {
+                val taskBeans = withContext(Dispatchers.IO) {
+                    DatabaseWrapper.loadAllTask()
+                }
+                if (taskBeans.isNotEmpty()) {
+                    exportData.tasks = taskBeans
+                } else {
+                    exportData.tasks = ArrayList<DailyTaskBean>()
+                }
 
-            val key = SaveKeyValues.getValue(Constant.WX_WEB_HOOK_KEY, "") as String
-            exportData.wxKey = key
+                val json = exportData.toJson()
+                Log.d(kTag, json)
 
-            exportData.emailConfig = DatabaseWrapper.loadLatestEmailConfig() ?: EmailConfigBean()
-
-            val isDetectGesture = SaveKeyValues.getValue(
-                Constant.GESTURE_DETECTOR_KEY, true
-            ) as Boolean
-            exportData.isDetectGesture = isDetectGesture
-
-            val isBackToHome = SaveKeyValues.getValue(
-                Constant.BACK_TO_HOME_KEY, true
-            ) as Boolean
-            exportData.isBackToHome = isBackToHome
-
-            val hour = SaveKeyValues.getValue(
-                Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR
-            ) as Int
-            exportData.resetTime = hour
-
-            val time = SaveKeyValues.getValue(
-                Constant.STAY_DD_TIMEOUT_KEY, Constant.DEFAULT_OVER_TIME
-            ) as Int
-            exportData.overTime = time
-
-            val command = SaveKeyValues.getValue(Constant.TASK_COMMAND_KEY, "打卡") as String
-            exportData.command = command
-
-            exportData.isAutoStart = SaveKeyValues.getValue(
-                Constant.TASK_AUTO_START_KEY, true
-            ) as Boolean
-
-            exportData.isRandomTime = SaveKeyValues.getValue(
-                Constant.RANDOM_TIME_KEY, true
-            ) as Boolean
-
-            exportData.isSkipChinaHoliday = SaveKeyValues.getValue(
-                Constant.SKIP_CHINA_HOLIDAY_KEY, false
-            ) as Boolean
-
-            exportData.isPowerSaveMode = SaveKeyValues.getValue(
-                Constant.POWER_SAVE_MODE_KEY, false
-            ) as Boolean
-
-            val value = SaveKeyValues.getValue(Constant.RANDOM_MINUTE_RANGE_KEY, 5) as Int
-            exportData.timeRange = value
-
-            val json = exportData.toJson()
-            Log.d(kTag, json)
-
-            // 分享
-            BottomActionSheet.Builder()
-                .setContext(this)
-                .setActionItemTitle(optionArray)
-                .setItemTextColor(R.color.theme_color.convertColor(this))
-                .setOnActionSheetListener(object : BottomActionSheet.OnActionSheetListener {
-                    override fun onActionItemClick(position: Int) {
-                        when (position) {
-                            0 -> shareTextTo(Constant.QQ, "QQ", json)
-                            1 -> shareTextTo(Constant.WECHAT, "微信", json)
-                            2 -> shareTextTo(Constant.TIM, "TIM", json)
-                            3 -> shareTextTo(Constant.ZFB, "支付宝", json)
-                            4 -> {
-                                val cipData = ClipData.newPlainText("TaskConfig", json)
-                                clipboard.setPrimaryClip(cipData)
-                                "已复制到剪切板".show(context)
+                // 分享
+                BottomActionSheet.Builder()
+                    .setContext(this@TaskConfigActivity)
+                    .setActionItemTitle(optionArray)
+                    .setItemTextColor(R.color.theme_color.convertColor(this@TaskConfigActivity))
+                    .setOnActionSheetListener(object : BottomActionSheet.OnActionSheetListener {
+                        override fun onActionItemClick(position: Int) {
+                            when (position) {
+                                0 -> shareTextTo(Constant.QQ, "QQ", json)
+                                1 -> shareTextTo(Constant.WECHAT, "微信", json)
+                                2 -> shareTextTo(Constant.TIM, "TIM", json)
+                                3 -> shareTextTo(Constant.ZFB, "支付宝", json)
+                                4 -> {
+                                    val cipData = ClipData.newPlainText("TaskConfig", json)
+                                    clipboard.setPrimaryClip(cipData)
+                                    "已复制到剪切板".show(context)
+                                }
                             }
                         }
-                    }
-                }).build().show()
+                    }).build().show()
+            }
         }
     }
 
-    @Suppress("unused")
-    @Subscribe(threadMode = ThreadMode.MAIN)
-    fun handleApplicationEvent(event: ApplicationEvent.HolidayDataStatusChanged) {
-        updateHolidayDataStatus()
+    private fun showWorkdaySelector() {
+        val orderedDays = CustomWorkdayManager.getOrderedDays()
+        val selectedDays = CustomWorkdayManager.loadWorkdays().toMutableSet()
+        val labels = orderedDays.map { CustomWorkdayManager.getDayLabel(it) }.toTypedArray()
+        val checkedItems = orderedDays.map { it in selectedDays }.toBooleanArray()
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("选择工作日")
+            .setMultiChoiceItems(labels, checkedItems) { _, which, isChecked ->
+                val day = orderedDays[which]
+                if (isChecked) {
+                    selectedDays.add(day)
+                } else {
+                    selectedDays.remove(day)
+                }
+            }
+            .setNegativeButton("取消", null)
+            .setPositiveButton("确定") { _, _ ->
+                if (selectedDays.isEmpty()) {
+                    "至少保留一天为工作日".show(this)
+                    return@setPositiveButton
+                }
+
+                val normalized = orderedDays.filter { it in selectedDays }.toSet()
+                CustomWorkdayManager.saveWorkdays(normalized)
+                updateCustomWorkdaySummary(normalized)
+            }
+            .show()
     }
 
-    private fun updateHolidayDataStatus() {
-        val enabled = binding.skipHolidaySwitch.isChecked
-        if (enabled) {
-            ChinaHolidayRemoteUpdater.refreshIfNeeded(this)
-        }
-
-        val status = ChinaHolidayCalendar.getDataStatus()
-        val todayAction = when {
-            !enabled -> "未开启，不影响任务"
-            status.todayInfo.shouldSkip -> "开启后今日会跳过"
-            else -> "开启后今日会执行"
-        }
-        val updatedAt = if (status.updatedAt > 0L) {
-            statusTimeFormat.format(Date(status.updatedAt))
-        } else {
-            "无远程缓存"
-        }
-
-        binding.holidayDataSourceView.text = buildString {
-            append("状态：")
-            append(if (enabled) "已开启" else "未开启")
-            append(" · 来源：")
-            append(status.source)
-        }
-        binding.holidayDataSourceView.setTextColor(if (enabled) "#4DDC64".toColorInt() else Color.RED)
-
-        binding.holidayDataCoverageView.text = if (status.hasOfficialAdjustment) {
-            "覆盖：${status.year}年 · 节假日${status.holidayCount}天 · 补班${status.workdayCount}天"
-        } else {
-            "覆盖：${status.year}年未配置官方调休表，仅按周末判断"
-        }
-        binding.holidayDataTodayView.text =
-            "今日：${status.todayInfo.reason} · $todayAction\n更新：$updatedAt"
+    private fun updateCustomWorkdaySummary(workdays: Set<DayOfWeek>) {
+        binding.workdayValueView.text = CustomWorkdayManager.formatWorkdays(workdays)
     }
 
     private fun setHourByPosition(position: Int) {
@@ -333,7 +314,7 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
 
     private fun updateResetHour(hour: Int) {
         if (hour !in 0..23) {
-            "重置时间必须在0到23点之间".show(context)
+            "重置时间必须在0到23点之间".show(this)
             return
         }
         binding.resetTimeView.text = "每天${hour}点"
@@ -341,12 +322,9 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
     }
 
     private fun setTaskResetTime(hour: Int) {
-        SaveKeyValues.putValue(Constant.RESET_TIME_KEY, hour)
-        // 取消旧 Alarm，注册新时间点的 Alarm
-        AlarmScheduler.cancel(this)
-        AlarmScheduler.schedule(this, hour)
+        SaveKeyValues.saveInt(Constant.RESET_TIME_KEY, hour)
         // 通知 Service 更新倒计时显示
-        EventBus.getDefault().post(ApplicationEvent.SetResetTaskTime)
+        ForegroundRunningService.emitResetTaskTime()
     }
 
     private fun setTimeByPosition(position: Int) {
@@ -376,11 +354,12 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
 
     private fun updateTimeout(time: Int) {
         if (time <= 0) {
-            "超时时间必须大于0秒".show(context)
+            "超时时间必须大于0秒".show(this)
             return
         }
         binding.timeoutTextView.text = "${time}s"
-        updateDingDingTimeout(time)
+        SaveKeyValues.saveInt(Constant.STAY_OVERTIME_KEY, time)
+        FloatingWindowController.setOvertime(time)
     }
 
     private fun shareTextTo(packageName: String, appName: String, text: String) {
@@ -401,23 +380,12 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
         }
     }
 
-    private fun updateDingDingTimeout(time: Int) {
-        SaveKeyValues.putValue(Constant.STAY_DD_TIMEOUT_KEY, time)
-        // 更新目标应用任务超时时间
-        EventBus.getDefault().post(ApplicationEvent.SetTaskOvertime(time))
-    }
-
     private fun updateRandomMinuteRange(value: Int) {
         if (value < 0) {
-            "随机时间范围不能小于0分钟".show(context)
+            "随机时间范围不能小于0分钟".show(this)
             return
         }
         binding.minuteRangeView.text = "${value}分钟"
-        SaveKeyValues.putValue(Constant.RANDOM_MINUTE_RANGE_KEY, value)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        EventBus.getDefault().unregister(this)
+        SaveKeyValues.saveInt(Constant.TIME_RANGE_KEY, value)
     }
 }

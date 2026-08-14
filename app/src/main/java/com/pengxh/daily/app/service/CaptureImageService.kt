@@ -20,30 +20,84 @@ import android.os.RemoteException
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.graphics.createBitmap
+import androidx.core.graphics.get
 import com.pengxh.daily.app.R
-import com.pengxh.daily.app.utils.ApplicationEvent
 import com.pengxh.daily.app.utils.Constant
-import com.pengxh.daily.app.utils.EmailManager
-import com.pengxh.daily.app.utils.HttpRequestManager
+import com.pengxh.daily.app.utils.LogFileManager
+import com.pengxh.daily.app.utils.MessageDispatcher
+import com.pengxh.daily.app.utils.ProjectionEvent
 import com.pengxh.daily.app.utils.ProjectionSession
 import com.pengxh.kt.lite.extensions.createImageFileDir
 import com.pengxh.kt.lite.extensions.saveImage
 import com.pengxh.kt.lite.utils.SaveKeyValues
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
-import org.greenrobot.eventbus.EventBus
-import org.greenrobot.eventbus.Subscribe
-import org.greenrobot.eventbus.ThreadMode
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.coroutines.resume
 
 class CaptureImageService : Service(), CoroutineScope by MainScope() {
+
+    companion object {
+        private val _projectionEvents = MutableSharedFlow<ProjectionEvent>(extraBufferCapacity = 2)
+        val projectionEvents = _projectionEvents.asSharedFlow()
+
+        fun emitProjectionEvent(event: ProjectionEvent) {
+            _projectionEvents.tryEmit(event)
+        }
+
+        // 等待截屏结果的协程作用域
+        @Volatile
+        private var captureScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+        // 截屏结果流，仅供 requestCaptureScreen() 内部使用
+        private val _captureResults = MutableSharedFlow<String>(extraBufferCapacity = 1)
+        private val captureResults = _captureResults.asSharedFlow()
+
+        private fun emitCaptureResult(imagePath: String) {
+            _captureResults.tryEmit(imagePath)
+        }
+
+        private val _captureScreenRequest = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+        /**
+         * 触发截屏，返回 CompletableDeferred 供调用方 await 结果
+         *
+         * 内部逻辑：
+         *   1. 发射截屏请求到 captureScreenRequest
+         *   2. 启动协程订阅 captureResults 等待截屏结果
+         *   3. 超时 3 秒兜底（覆盖 captureScreen 内部黑屏重试的 ~2.3s）
+         *   4. complete Deferred → 调用方 await() 即时返回
+         */
+        fun requestCaptureScreen(): CompletableDeferred<String?> {
+            _captureScreenRequest.tryEmit(Unit)
+            val deferred = CompletableDeferred<String?>()
+            captureScope.launch {
+                val result = withTimeoutOrNull(5000L) {
+                    captureResults.first()
+                }
+                deferred.complete(result ?: "")
+            }
+            return deferred
+        }
+
+        private fun resetCaptureScope() {
+            captureScope.cancel()
+            captureScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        }
+    }
 
     private val kTag = "CaptureImageService"
     private val notificationManager by lazy { getSystemService(NotificationManager::class.java) }
@@ -62,16 +116,15 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
         }
     }
     private val dateTimeFormat by lazy { SimpleDateFormat("yyyyMMdd_HHmmss", Locale.CHINA) }
-    private val httpRequestManager by lazy { HttpRequestManager(this) }
-    private val emailManager by lazy { EmailManager(this) }
     private val mpr by lazy { getSystemService(MediaProjectionManager::class.java) }
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private var isCapturingInitialized = false
+    private var captureRetryCount = 0
 
     override fun onCreate() {
         super.onCreate()
-        EventBus.getDefault().register(this)
+        resetCaptureScope()
         val name = "${resources.getString(R.string.app_name)}截屏服务"
         val channel = NotificationChannel(
             "capture_image_service_channel", name, NotificationManager.IMPORTANCE_LOW
@@ -93,6 +146,10 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
         } else {
             startForeground(Constant.CAPTURE_IMAGE_SERVICE_NOTIFICATION_ID, notification)
         }
+
+        launch {
+            _captureScreenRequest.collect { captureScreen() }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -111,7 +168,7 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
 
         if (data == null) {
             Log.w(kTag, "onStartCommand: intent data is null")
-            EventBus.getDefault().post(ApplicationEvent.ProjectionFailed)
+            emitProjectionEvent(ProjectionEvent.Failed)
             return START_STICKY
         }
 
@@ -119,7 +176,7 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
             val projection = mpr.getMediaProjection(resultCode, data)
             if (projection == null) {
                 Log.w(kTag, "getMediaProjection returned null")
-                EventBus.getDefault().post(ApplicationEvent.ProjectionFailed)
+                emitProjectionEvent(ProjectionEvent.Failed)
                 return START_STICKY
             }
 
@@ -128,7 +185,7 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
                     super.onStop()
                     Log.w(kTag, "MediaProjection stopped by system")
                     ProjectionSession.markStoppedNeedAuth()
-                    SaveKeyValues.putValue(Constant.RESULT_SOURCE_KEY, 0)
+                    SaveKeyValues.saveInt(Constant.RESULT_SOURCE_KEY, 0)
                     releaseCaptureResources()
                     isCapturingInitialized = false
                 }
@@ -140,22 +197,15 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
             // 初始化截屏资源（只执行一次）
             initializeCaptureResources(projection)
 
-            EventBus.getDefault().post(ApplicationEvent.ProjectionReady)
-            SaveKeyValues.putValue(Constant.RESULT_SOURCE_KEY, 1)
+            emitProjectionEvent(ProjectionEvent.Ready)
+
+            SaveKeyValues.saveInt(Constant.RESULT_SOURCE_KEY, 1)
         } catch (e: Exception) {
             Log.w(kTag, "createMediaProjection failed: ${e.message}", e)
-            EventBus.getDefault().post(ApplicationEvent.ProjectionFailed)
+            emitProjectionEvent(ProjectionEvent.Failed)
         }
 
         return START_STICKY
-    }
-
-    @Suppress("unused")
-    @Subscribe(threadMode = ThreadMode.MAIN)
-    fun handleApplicationEvent(event: ApplicationEvent) {
-        if (event is ApplicationEvent.CaptureScreen) {
-            captureScreen()
-        }
     }
 
     private fun initializeCaptureResources(projection: MediaProjection) {
@@ -164,6 +214,7 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
             return
         }
 
+        captureRetryCount = 0
         val metrics = resources.displayMetrics
         val width = metrics.widthPixels
         val height = metrics.heightPixels
@@ -195,22 +246,26 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
 
     private fun captureScreen() {
         if (!ProjectionSession.isStateActive()) {
-            sendChannelMessage("MediaProjection not active. state=${ProjectionSession.getState()}")
+            MessageDispatcher.sendMessage(
+                "截屏失败", "MediaProjection not active. state=${ProjectionSession.getState()}"
+            )
             return
         }
 
         val projection = ProjectionSession.getProjection()
         if (projection == null) {
-            sendChannelMessage("MediaProjection not available")
+            MessageDispatcher.sendMessage("截屏失败", "MediaProjection not available")
             return
         }
 
         // 如果资源未初始化，先初始化
         if (!isCapturingInitialized || imageReader == null || virtualDisplay == null) {
             Log.w(kTag, "Capture resources not initialized, reinitializing...")
+            // 先释放可能残留的脏资源，避免 VirtualDisplay 泄漏或状态不一致
+            releaseCaptureResources()
             initializeCaptureResources(projection)
             if (!isCapturingInitialized) {
-                sendChannelMessage("截屏资源初始化失败")
+                MessageDispatcher.sendMessage("截屏失败", "截屏资源初始化失败")
                 return
             }
         }
@@ -218,19 +273,25 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
         launch {
             try {
                 val reader = imageReader ?: run {
-                    sendChannelMessage("ImageReader 为空")
+                    MessageDispatcher.sendMessage("截屏失败", "ImageReader 为空")
                     return@launch
                 }
 
-                // 最多等待2秒
-                val image = withTimeoutOrNull(2000) {
+                val startTime = System.currentTimeMillis()
+                Log.d(kTag, "================== 开始截屏 ==================")
+
+                // 不排空旧帧：后台环境下 VirtualDisplay 帧率被系统限速，排空后等新帧依赖时机运气，直接用 buffer 中已有的帧更可靠
+                val image = withTimeoutOrNull(1000L) {
+                    Log.d(kTag, "进入等待......")
                     waitForImageAvailable(reader)
                 }
 
+                val elapsed = System.currentTimeMillis() - startTime
                 if (image == null) {
-                    sendChannelMessage("获取图像失败: acquireNextImage返回null")
+                    Log.e(kTag, "获取图像失败: acquireNextImage返回null, 总耗时: ${elapsed}ms")
                     return@launch
                 }
+                Log.d(kTag, "图像获取成功, 耗时: ${elapsed}ms")
 
                 val width = image.width
                 val height = image.height
@@ -263,70 +324,113 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
                     cropped
                 }
 
+                if (isBitmapMostlyBlack(topHalf)) {
+                    if (captureRetryCount < 2) {
+                        captureRetryCount++
+                        Log.w(kTag, "检测到黑色画面，第${captureRetryCount}次重试")
+                        delay(1000)
+                        captureScreen()
+                        return@launch
+                    } else {
+                        Log.w(kTag, "黑色画面重试已耗尽，使用当前图像")
+                        captureRetryCount = 0
+                    }
+                } else {
+                    captureRetryCount = 0
+                }
+
                 val imagePath = "${createImageFileDir()}/${dateTimeFormat.format(Date())}.png"
                 topHalf.saveImage(imagePath)
-                EventBus.getDefault().post(ApplicationEvent.CaptureCompleted(imagePath))
+                LogFileManager.writeLog("截屏成功: $imagePath")
+                emitCaptureResult(imagePath)
             } catch (_: RemoteException) {
                 Log.w(kTag, "RemoteException during capture")
                 ProjectionSession.markStoppedNeedAuth()
-                EventBus.getDefault().post(ApplicationEvent.ProjectionFailed)
+                emitProjectionEvent(ProjectionEvent.Failed)
                 releaseCaptureResources()
                 isCapturingInitialized = false
             } catch (_: SecurityException) {
                 Log.w(kTag, "SecurityException during capture")
                 ProjectionSession.markStoppedNeedAuth()
-                EventBus.getDefault().post(ApplicationEvent.ProjectionFailed)
+                emitProjectionEvent(ProjectionEvent.Failed)
                 releaseCaptureResources()
                 isCapturingInitialized = false
             } catch (e: Exception) {
                 Log.e(kTag, "截屏失败: ${e.message}", e)
-                sendChannelMessage("截屏失败: ${e.message}")
+                MessageDispatcher.sendMessage("截屏失败", "${e.message}")
             }
         }
     }
 
     private suspend fun waitForImageAvailable(imageReader: ImageReader): Image? {
         return suspendCancellableCoroutine { continuation ->
+            var resumed = false
+
             val listener = ImageReader.OnImageAvailableListener { reader ->
-                val image = reader.acquireLatestImage()
+                if (resumed) return@OnImageAvailableListener
+                // acquireLatestImage 在部分国内 OEM 后台场景可能返回 null，用 acquireNextImage 兜底
+                val image = reader.acquireLatestImage() ?: reader.acquireNextImage()
                 if (image != null) {
                     reader.setOnImageAvailableListener(null, null)
+                    resumed = true
                     if (continuation.isActive) {
                         continuation.resume(image)
                     } else {
                         image.close()
                     }
                 }
+                // image 为 null 时保留 listener，等待下一次回调；超时由 withTimeoutOrNull 兜底
             }
 
             continuation.invokeOnCancellation {
-                imageReader.setOnImageAvailableListener(null, null)
+                if (!resumed) {
+                    imageReader.setOnImageAvailableListener(null, null)
+                }
             }
 
             imageReader.setOnImageAvailableListener(listener, null)
-        }
-    }
 
-    private fun sendChannelMessage(content: String) {
-        val type = SaveKeyValues.getValue(Constant.CHANNEL_TYPE_KEY, 0) as Int
-        when (type) {
-            0 -> httpRequestManager.sendMessage("截屏失败", content)
-            1 -> emailManager.sendEmail("截屏失败", content, false)
-            else -> Log.w(kTag, "消息渠道不支持: content => $content")
+            // 立即尝试获取 buffer 中已有的帧（不依赖 listener 异步回调），后台慢帧率场景下 buffer 里大概率已有一帧，直接取可避免超时
+            if (!resumed) {
+                val existing = imageReader.acquireLatestImage()
+                if (existing != null) {
+                    imageReader.setOnImageAvailableListener(null, null)
+                    resumed = true
+                    continuation.resume(existing)
+                }
+            }
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        Log.d(kTag, "CaptureImageService 被销毁，清理 MediaProjection")
-        EventBus.getDefault().post(ApplicationEvent.ProjectionDestroyed)
         cancel()
+        captureScope.cancel()
         releaseCaptureResources()
         ProjectionSession.clear()
-        SaveKeyValues.putValue(Constant.RESULT_SOURCE_KEY, 0)
+        SaveKeyValues.saveInt(Constant.RESULT_SOURCE_KEY, 0)
         isCapturingInitialized = false
         stopForeground(STOP_FOREGROUND_REMOVE)
-        EventBus.getDefault().unregister(this)
+    }
+
+    private fun isBitmapMostlyBlack(bitmap: Bitmap): Boolean {
+        val sampleStep = 10
+        val darkThreshold = 20
+        var darkPixels = 0
+        var totalPixels = 0
+        for (y in 0 until bitmap.height step sampleStep) {
+            for (x in 0 until bitmap.width step sampleStep) {
+                val pixel = bitmap[x, y]
+                val r = (pixel shr 16) and 0xFF
+                val g = (pixel shr 8) and 0xFF
+                val b = pixel and 0xFF
+                if (r < darkThreshold && g < darkThreshold && b < darkThreshold) {
+                    darkPixels++
+                }
+                totalPixels++
+            }
+        }
+        return totalPixels > 0 && darkPixels.toFloat() / totalPixels >= 0.90f
     }
 
     private fun releaseCaptureResources() {

@@ -13,10 +13,9 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import com.pengxh.daily.app.databinding.WindowFloatingBinding
-import com.pengxh.daily.app.utils.ApplicationEvent
 import com.pengxh.daily.app.utils.Constant
-import com.pengxh.daily.app.utils.EmailManager
-import com.pengxh.daily.app.utils.HttpRequestManager
+import com.pengxh.daily.app.utils.FloatingWindowController
+import com.pengxh.daily.app.utils.MessageDispatcher
 import com.pengxh.kt.lite.utils.SaveKeyValues
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,16 +25,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.greenrobot.eventbus.EventBus
-import org.greenrobot.eventbus.Subscribe
-import org.greenrobot.eventbus.ThreadMode
 
 class FloatingWindowService : Service(), CoroutineScope by CoroutineScope(Dispatchers.Main) {
+
     private val kTag = "FloatingWindowService"
     private val windowManager by lazy { getSystemService(WindowManager::class.java) }
     private val activityManager by lazy { getSystemService(ActivityManager::class.java) }
-    private val httpRequestManager by lazy { HttpRequestManager(this) }
-    private val emailManager by lazy { EmailManager(this) }
     private lateinit var binding: WindowFloatingBinding
     private var floatViewParams: WindowManager.LayoutParams? = null
     private var initialX = 0
@@ -51,9 +46,6 @@ class FloatingWindowService : Service(), CoroutineScope by CoroutineScope(Dispat
     override fun onCreate() {
         super.onCreate()
         binding = WindowFloatingBinding.inflate(LayoutInflater.from(this))
-
-        EventBus.getDefault().register(this)
-
         floatViewParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -61,15 +53,55 @@ class FloatingWindowService : Service(), CoroutineScope by CoroutineScope(Dispat
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.CENTER or Gravity.TOP
+            gravity = Gravity.TOP or Gravity.START
         }.also {
             windowManager.addView(binding.root, it)
         }
 
+        // 布局完成后，将悬浮窗移动到屏幕右侧垂直居中
+        binding.root.post {
+            val displayMetrics = resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+            val screenHeight = displayMetrics.heightPixels
+            val viewWidth = binding.root.width
+            val viewHeight = binding.root.height
+
+            floatViewParams?.let {
+                it.x = screenWidth - viewWidth
+                it.y = (screenHeight - viewHeight) / 2
+                windowManager.updateViewLayout(binding.root, it)
+            }
+        }
+
+        // 收集悬浮窗控制事件
+        launch {
+            FloatingWindowController.timeTick.collect { tick ->
+                binding.timeView.text = "${tick}s"
+                binding.root.alpha = if (tick < 1) 0.0f else 1.0f
+            }
+        }
+        launch {
+            FloatingWindowController.overtime.collect { seconds ->
+                binding.timeView.text = "${seconds}s"
+            }
+        }
+        launch {
+            FloatingWindowController.visibility.collect { visible ->
+                if (visible) {
+                    binding.root.alpha = 1.0f
+                    val time = SaveKeyValues.loadInt(
+                        Constant.STAY_OVERTIME_KEY, Constant.DEFAULT_OVER_TIME
+                    )
+                    binding.timeView.text = "${time}s"
+                } else {
+                    binding.root.alpha = 0.0f
+                    binding.timeView.text = "0s"
+                }
+            }
+        }
+
         // 获取目标应用任务超时时间
-        val time = SaveKeyValues.getValue(
-            Constant.STAY_DD_TIMEOUT_KEY, Constant.DEFAULT_OVER_TIME
-        ) as Int
+        val time = SaveKeyValues.loadInt(Constant.STAY_OVERTIME_KEY, Constant.DEFAULT_OVER_TIME)
         binding.timeView.text = "${time}s"
 
         // 移动悬浮窗
@@ -79,7 +111,7 @@ class FloatingWindowService : Service(), CoroutineScope by CoroutineScope(Dispat
     }
 
     private fun startMemoryMonitoring() {
-        val mode = SaveKeyValues.getValue(Constant.POWER_SAVE_MODE_KEY, false) as Boolean
+        val mode = SaveKeyValues.loadBoolean(Constant.POWER_SAVE_MODE_KEY, false)
         val interval = if (mode) {
             60_000L
         } else {
@@ -109,56 +141,9 @@ class FloatingWindowService : Service(), CoroutineScope by CoroutineScope(Dispat
             withContext(Dispatchers.Main) {
                 binding.waveProgressView.setProgress(usagePercent)
                 if (usagePercent >= 90) {
-                    sendChannelMessage()
+                    MessageDispatcher.sendMessage("内存使用预警", "当前内存使用已超过90%，请关注设备运行情况")
                 }
             }
-        }
-    }
-
-    private fun sendChannelMessage() {
-        val title = "内存使用预警"
-        val content = "当前内存使用已超过90%，请关注设备运行情况"
-        val type = SaveKeyValues.getValue(Constant.CHANNEL_TYPE_KEY, 0) as Int
-        when (type) {
-            0 -> httpRequestManager.sendMessage(title, content)
-            1 -> emailManager.sendEmail(title, content, false)
-            else -> Log.d(kTag, "sendChannelMessage: 消息渠道不支持")
-        }
-    }
-
-    @Suppress("unused")
-    @Subscribe(threadMode = ThreadMode.MAIN)
-    fun handleApplicationEvent(event: ApplicationEvent) {
-        when (event) {
-            is ApplicationEvent.ShowFloatingWindow -> {
-                binding.root.alpha = 1.0f
-                val time = SaveKeyValues.getValue(
-                    Constant.STAY_DD_TIMEOUT_KEY, Constant.DEFAULT_OVER_TIME
-                ) as Int
-                binding.timeView.text = "${time}s"
-            }
-
-            is ApplicationEvent.HideFloatingWindow -> {
-                binding.root.alpha = 0.0f
-                binding.timeView.text = "0s"
-            }
-
-            is ApplicationEvent.SetTaskOvertime -> {
-                // 更新目标应用任务超时时间
-                binding.timeView.text = "${event.time}s"
-            }
-
-            is ApplicationEvent.UpdateFloatingViewTime -> {
-                // 更新悬浮窗倒计时
-                binding.timeView.text = "${event.tick}s"
-                if (event.tick < 1) {
-                    binding.root.alpha = 0.0f
-                } else {
-                    binding.root.alpha = 1.0f
-                }
-            }
-
-            else -> {}
         }
     }
 
@@ -195,7 +180,6 @@ class FloatingWindowService : Service(), CoroutineScope by CoroutineScope(Dispat
         super.onDestroy()
         memoryMonitorJob?.cancel()
         cancel()
-        EventBus.getDefault().unregister(this)
         if (::binding.isInitialized && binding.root.isAttachedToWindow) {
             try {
                 windowManager.removeViewImmediate(binding.root)

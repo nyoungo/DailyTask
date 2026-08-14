@@ -1,6 +1,7 @@
 package com.pengxh.daily.app.utils
 
 import com.google.gson.Gson
+import com.google.gson.JsonObject
 import com.google.gson.JsonSyntaxException
 import com.google.gson.reflect.TypeToken
 import com.pengxh.daily.app.model.ExportDataModel
@@ -15,11 +16,15 @@ class TaskDataManager() {
         Regex("""^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$""")
     }
 
-    fun importTasks(json: String): ImportResult {
+    suspend fun importTasks(json: String): ImportResult {
         return try {
             val type = object : TypeToken<ExportDataModel>() {}.type
             val config = gson.fromJson<ExportDataModel>(json, type)
 
+            // 保存相关配置
+            saveConfiguration(config)
+
+            // 导入任务
             val importedTasks = mutableListOf<DailyTaskBean>()
             for (task in config.tasks.orEmpty()) {
                 val taskTime = task.time
@@ -33,9 +38,6 @@ class TaskDataManager() {
                 }
             }
 
-            // 保存相关配置
-            saveConfiguration(config)
-
             ImportResult.Success(importedTasks.size)
         } catch (e: JsonSyntaxException) {
             e.printStackTrace()
@@ -47,45 +49,66 @@ class TaskDataManager() {
     }
 
     private fun saveConfiguration(config: ExportDataModel) {
-        SaveKeyValues.putValue(
-            Constant.MESSAGE_TITLE_KEY,
-            config.messageTitle?.takeIf { it.isNotBlank() } ?: "打卡结果通知"
+        //
+        SaveKeyValues.saveInt(Constant.RESET_TIME_KEY, config.resetTime.coerceIn(0, 23))
+        SaveKeyValues.saveInt(
+            Constant.STAY_OVERTIME_KEY,
+            config.overtime.takeIf { it > 0 } ?: Constant.DEFAULT_OVER_TIME
         )
+        SaveKeyValues.saveInt(
+            Constant.TIME_RANGE_KEY,
+            config.timeRange.coerceAtLeast(Constant.DEFAULT_TIME_RANGE)
+        )
+        SaveKeyValues.saveInt(Constant.MSG_CHANNEL_KEY, config.msgChannel.coerceIn(0, 1))
+        SaveKeyValues.saveInt(Constant.TARGET_APP_KEY, config.targetApp.coerceIn(0, 3))
 
-        // 保存企业微信 Key
-        SaveKeyValues.putValue(Constant.WX_WEB_HOOK_KEY, config.wxKey ?: "")
+        //
+        SaveKeyValues.saveString(
+            Constant.REMOTE_COMMAND_KEY,
+            config.remoteCommand?.takeIf { it.isNotBlank() } ?: "打卡"
+        )
+        SaveKeyValues.saveString(
+            Constant.MESSAGE_TITLE_KEY,
+            config.msgTitle?.takeIf { it.isNotBlank() } ?: "打卡结果通知"
+        )
+        SaveKeyValues.saveString(Constant.WX_WEB_HOOK_KEY, config.wxKey ?: "")
+        val workdays = config.customWorkdays
+            ?.takeIf { it.isNotBlank() }
+            ?.let {
+                CustomWorkdayManager.serializeWorkdays(
+                    CustomWorkdayManager.loadWorkdaysFromRaw(it)
+                )
+            }
+            ?: CustomWorkdayManager.serializeWorkdays(
+                CustomWorkdayManager.getOrderedDays().take(5).toSet()
+            )
+        SaveKeyValues.saveString(Constant.CUSTOM_WORKDAYS_KEY, workdays)
 
+        //
+        SaveKeyValues.saveBoolean(Constant.GESTURE_DETECTOR_KEY, config.isDetectGesture)
+        SaveKeyValues.saveBoolean(Constant.BACK_TO_HOME_KEY, config.isBackToHome)
+        SaveKeyValues.saveBoolean(Constant.TASK_AUTO_RECYCLE_KEY, config.isAutoRecycle)
+        SaveKeyValues.saveBoolean(Constant.RANDOM_TIME_KEY, config.isRandomTime)
+        SaveKeyValues.saveBoolean(Constant.SKIP_HOLIDAY_KEY, config.isSkipHoliday)
+        SaveKeyValues.saveBoolean(Constant.POWER_SAVE_MODE_KEY, config.isSavePower)
+
+        //
         val email = config.emailConfig
-        val outbox = email?.outbox
-        val authCode = email?.authCode
-        val inbox = email?.inbox
+        val outbox = email?.first
+        val authCode = email?.second
+        val inbox = email?.third
         if (email != null &&
             !outbox.isNullOrBlank() &&
             !authCode.isNullOrBlank() &&
             !inbox.isNullOrBlank()
         ) {
-            DatabaseWrapper.insertConfig(outbox, authCode, inbox)
+            val cacheObj = JsonObject().apply {
+                addProperty("outbox", outbox)
+                addProperty("authCode", authCode)
+                addProperty("inbox", inbox)
+            }
+            ConfigStore.get().save(Constant.EMAIL_CONFIG_KEY, cacheObj)
         }
-
-        SaveKeyValues.putValue(Constant.GESTURE_DETECTOR_KEY, config.isDetectGesture)
-        SaveKeyValues.putValue(Constant.BACK_TO_HOME_KEY, config.isBackToHome)
-        SaveKeyValues.putValue(Constant.RESET_TIME_KEY, config.resetTime.coerceIn(0, 23))
-        SaveKeyValues.putValue(
-            Constant.STAY_DD_TIMEOUT_KEY,
-            config.overTime.takeIf { it > 0 } ?: Constant.DEFAULT_OVER_TIME
-        )
-        SaveKeyValues.putValue(
-            Constant.TASK_COMMAND_KEY,
-            config.command?.takeIf { it.isNotBlank() } ?: "打卡"
-        )
-        SaveKeyValues.putValue(Constant.TASK_AUTO_START_KEY, config.isAutoStart)
-        SaveKeyValues.putValue(Constant.RANDOM_TIME_KEY, config.isRandomTime)
-        SaveKeyValues.putValue(Constant.POWER_SAVE_MODE_KEY, config.isPowerSaveMode)
-        SaveKeyValues.putValue(Constant.SKIP_CHINA_HOLIDAY_KEY, config.isSkipChinaHoliday)
-        SaveKeyValues.putValue(
-            Constant.RANDOM_MINUTE_RANGE_KEY,
-            config.timeRange.coerceAtLeast(0)
-        )
     }
 
     private fun isValidTaskTime(time: String?): Boolean {

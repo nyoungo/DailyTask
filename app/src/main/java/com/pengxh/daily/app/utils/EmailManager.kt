@@ -1,14 +1,9 @@
 package com.pengxh.daily.app.utils
 
-import android.content.Context
-import android.os.BatteryManager
 import android.util.Log
-import com.pengxh.daily.app.BuildConfig
-import com.pengxh.daily.app.sqlite.DatabaseWrapper
-import com.pengxh.kt.lite.extensions.timestampToDate
-import com.pengxh.kt.lite.extensions.toJson
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -24,9 +19,25 @@ import javax.mail.internet.MimeBodyPart
 import javax.mail.internet.MimeMessage
 import javax.mail.internet.MimeMultipart
 
-class EmailManager(private val context: Context) {
+object EmailManager {
     private val kTag = "EmailManager"
-    private val batteryManager by lazy { context.getSystemService(BatteryManager::class.java) }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private data class EmailConfig(val outbox: String, val authCode: String, val inbox: String)
+
+    private fun loadEmailConfig(onFailure: ((String) -> Unit)?): EmailConfig? {
+        val obj = ConfigStore.get().load(Constant.EMAIL_CONFIG_KEY)
+        if (obj.isEmpty) {
+            onFailure?.invoke("邮箱未配置，无法发送邮件")
+            return null
+        }
+        Log.d(kTag, "邮箱配置: $obj")
+        return EmailConfig(
+            outbox = obj.get("outbox").asString,
+            authCode = obj.get("authCode").asString,
+            inbox = obj.get("inbox").asString
+        )
+    }
 
     private fun createSmtpProperties(): Properties {
         val props = Properties().apply {
@@ -47,30 +58,14 @@ class EmailManager(private val context: Context) {
     fun sendEmail(
         title: String,
         content: String,
-        isTest: Boolean,
         onSuccess: (() -> Unit)? = null,
         onFailure: ((String) -> Unit)? = null
     ) {
-        val config = DatabaseWrapper.loadLatestEmailConfig()
-        if (config == null) {
-            onFailure?.invoke("邮箱未配置，无法发送邮件")
-            return
-        }
-
-        Log.d(kTag, "邮箱配置: ${config.toJson()}")
+        val config = loadEmailConfig(onFailure) ?: return
 
         val authenticator = EmailAuthenticator(config.outbox, config.authCode)
         val props = createSmtpProperties()
         val session = Session.getInstance(props, authenticator)
-
-        val battery =
-            batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-        val content = buildString {
-            appendLine(content)
-            appendLine("当前日期：${System.currentTimeMillis().timestampToDate()}")
-            appendLine("当前电量：${if (battery >= 0) "$battery%" else "未知"}")
-            append("版本号：${BuildConfig.VERSION_NAME}")
-        }
 
         val message = MimeMessage(session).apply {
             setFrom(InternetAddress(config.outbox))
@@ -80,7 +75,7 @@ class EmailManager(private val context: Context) {
             setText(content)
         }
 
-        sendAsync(message, isTest, onSuccess, onFailure)
+        sendAsync(message, onSuccess, onFailure)
     }
 
     /**
@@ -90,17 +85,10 @@ class EmailManager(private val context: Context) {
         title: String,
         content: String,
         filePath: String,
-        isTest: Boolean,
         onSuccess: (() -> Unit)? = null,
         onFailure: ((String) -> Unit)? = null
     ) {
-        val config = DatabaseWrapper.loadLatestEmailConfig()
-        if (config == null) {
-            onFailure?.invoke("邮箱未配置，无法发送邮件")
-            return
-        }
-
-        Log.d(kTag, "邮箱配置: ${config.toJson()}")
+        val config = loadEmailConfig(onFailure) ?: return
 
         val authenticator = EmailAuthenticator(config.outbox, config.authCode)
         val props = createSmtpProperties()
@@ -132,7 +120,7 @@ class EmailManager(private val context: Context) {
             setContent(multipart)
         }
 
-        sendAsync(message, isTest, onSuccess, onFailure)
+        sendAsync(message, onSuccess, onFailure)
     }
 
     /**
@@ -140,35 +128,31 @@ class EmailManager(private val context: Context) {
      */
     private fun sendAsync(
         message: MimeMessage,
-        isTest: Boolean,
         onSuccess: (() -> Unit)? = null,
         onFailure: ((String) -> Unit)? = null
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
+        scope.launch {
             try {
                 Transport.send(message)
-                if (isTest) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess?.invoke()
-                    }
+                withContext(Dispatchers.Main) {
+                    onSuccess?.invoke()
                 }
             } catch (e: Exception) {
-                if (isTest) {
-                    val errorMessage = when {
-                        e.message?.contains("535", ignoreCase = true) == true ->
-                            "邮箱认证失败，请检查邮箱账号和授权码是否正确"
+                val errorMessage = when {
+                    e.message?.contains("535", ignoreCase = true) == true ->
+                        "邮箱认证失败，请检查邮箱账号和授权码是否正确"
 
-                        e.message?.contains("authentication failed", ignoreCase = true) == true ->
-                            "邮箱认证失败，请确认使用的是授权码而非登录密码"
+                    e.message?.contains("authentication failed", ignoreCase = true) == true ->
+                        "邮箱认证失败，请确认使用的是授权码而非登录密码"
 
-                        else -> "邮件发送失败: ${e.javaClass.simpleName} - ${e.message}"
-                    }
+                    else -> "邮件发送失败: ${e.javaClass.simpleName} - ${e.message}"
+                }
 
-                    withContext(Dispatchers.Main) {
-                        onFailure?.invoke(errorMessage)
-                    }
+                withContext(Dispatchers.Main) {
+                    onFailure?.invoke(errorMessage)
                 }
             }
         }
     }
+
 }

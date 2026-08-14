@@ -3,13 +3,12 @@ package com.pengxh.daily.app.ui
 import android.os.Bundle
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.lifecycle.ViewModelProvider
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.gson.JsonObject
 import com.pengxh.daily.app.databinding.ActivityMessageChannelBinding
-import com.pengxh.daily.app.sqlite.DatabaseWrapper
+import com.pengxh.daily.app.utils.ConfigStore
 import com.pengxh.daily.app.utils.Constant
-import com.pengxh.daily.app.utils.EmailManager
-import com.pengxh.daily.app.vm.MessageViewModel
+import com.pengxh.daily.app.utils.MessageDispatcher
 import com.pengxh.kt.lite.base.KotlinBaseActivity
 import com.pengxh.kt.lite.extensions.isEmail
 import com.pengxh.kt.lite.extensions.show
@@ -18,10 +17,7 @@ import com.pengxh.kt.lite.utils.SaveKeyValues
 
 class MessageChannelActivity : KotlinBaseActivity<ActivityMessageChannelBinding>() {
 
-    private val kTag = "MessageChannelActivity"
     private val context = this
-    private val messageViewModel by lazy { ViewModelProvider(this)[MessageViewModel::class.java] }
-    private val emailManager by lazy { EmailManager(this) }
 
     override fun initViewBinding(): ActivityMessageChannelBinding {
         return ActivityMessageChannelBinding.inflate(layoutInflater)
@@ -37,30 +33,22 @@ class MessageChannelActivity : KotlinBaseActivity<ActivityMessageChannelBinding>
     }
 
     override fun initOnCreate(savedInstanceState: Bundle?) {
-        val title = SaveKeyValues.getValue(Constant.MESSAGE_TITLE_KEY, "打卡结果通知") as String
+        val title = SaveKeyValues.loadString(Constant.MESSAGE_TITLE_KEY, "打卡结果通知")
         binding.messageTitleView.setText(title)
 
-        val type = SaveKeyValues.getValue(Constant.CHANNEL_TYPE_KEY, 0) as Int
-        if (type == 0) {
-            binding.wxRadioButton.isChecked = true
-        } else if (type == 1) {
-            binding.qqRadioButton.isChecked = true
-        }
-
-        val key = SaveKeyValues.getValue(Constant.WX_WEB_HOOK_KEY, "") as String
+        val key = SaveKeyValues.loadString(Constant.WX_WEB_HOOK_KEY, "")
         if (!key.isBlank()) {
             binding.wxKeyView.setText(key)
         }
 
-        DatabaseWrapper.loadLatestEmailConfig()?.let {
-            val outbox = if (it.outbox.contains("@qq.com")) {
-                it.outbox.dropLast(7)
-            } else {
-                it.outbox
-            }
-            binding.emailSendAddressView.setText(outbox)
-            binding.emailSendCodeView.setText(it.authCode)
-            binding.emailInboxView.setText(it.inbox)
+        val obj = ConfigStore.get().load(Constant.EMAIL_CONFIG_KEY)
+        if (!obj.isEmpty) {
+            val outbox = obj.get("outbox").asString
+            val authCode = obj.get("authCode").asString
+            val inbox = obj.get("inbox").asString
+            binding.emailSendAddressView.setText(if (outbox.contains("@qq.com")) outbox.dropLast(7) else outbox)
+            binding.emailSendCodeView.setText(authCode)
+            binding.emailInboxView.setText(inbox)
         }
     }
 
@@ -69,17 +57,6 @@ class MessageChannelActivity : KotlinBaseActivity<ActivityMessageChannelBinding>
     }
 
     override fun initEvent() {
-        binding.wxRadioButton.setOnClickListener {
-            val key = SaveKeyValues.getValue(Constant.WX_WEB_HOOK_KEY, "") as String
-            if (binding.wxRadioButton.isChecked && key.isNotBlank()) {
-                SaveKeyValues.putValue(Constant.CHANNEL_TYPE_KEY, 0)
-                binding.qqRadioButton.isChecked = false
-            } else {
-                "请先配置企业微信消息 Webhook key".show(this)
-                binding.wxRadioButton.isChecked = false
-            }
-        }
-
         binding.sendWxButton.setOnClickListener {
             val key = binding.wxKeyView.text.toString()
             if (key.isBlank()) {
@@ -87,42 +64,30 @@ class MessageChannelActivity : KotlinBaseActivity<ActivityMessageChannelBinding>
                 return@setOnClickListener
             }
 
-            SaveKeyValues.putValue(
-                Constant.MESSAGE_TITLE_KEY,
-                binding.messageTitleView.text.toString().trim()
+            SaveKeyValues.saveString(
+                Constant.WX_WEB_HOOK_KEY, binding.wxKeyView.text.toString()
             )
-            SaveKeyValues.putValue(Constant.WX_WEB_HOOK_KEY, key)
 
             MaterialAlertDialogBuilder(this)
                 .setTitle("测试消息")
                 .setMessage("企业微信配置完成，可以发送企业微信消息。\n\n是否继续？")
-                .setCancelable(false) // 禁止点击外部关闭
+                .setCancelable(false)
                 .setPositiveButton("继续") { _, _ ->
                     sendTestMessage()
                 }.setNegativeButton("取消", null).show()
         }
 
-        binding.qqRadioButton.setOnClickListener {
-            val config = DatabaseWrapper.loadLatestEmailConfig()
-            if (binding.qqRadioButton.isChecked && config != null) {
-                SaveKeyValues.putValue(Constant.CHANNEL_TYPE_KEY, 1)
-                binding.wxRadioButton.isChecked = false
-            } else {
-                "请先配置QQ邮箱".show(context)
-                binding.qqRadioButton.isChecked = false
-            }
-        }
-
         binding.sendEmailButton.setOnClickListener {
             val address = binding.emailSendAddressView.text.toString()
+            if (address.isBlank()) {
+                binding.emailSendAddressView.shakeIfEmpty()
+                "发件箱地址为空".show(context)
+                return@setOnClickListener
+            }
             val outbox = if (address.contains("@qq.com")) {
                 address
             } else {
                 "${address}@qq.com"
-            }
-            if (outbox.isBlank()) {
-                "发件箱地址为空".show(context)
-                return@setOnClickListener
             }
             if (!outbox.isEmail()) {
                 "发件箱格式错误，请检查".show(context)
@@ -131,12 +96,14 @@ class MessageChannelActivity : KotlinBaseActivity<ActivityMessageChannelBinding>
 
             val authCode = binding.emailSendCodeView.text.toString()
             if (authCode.isBlank()) {
+                binding.emailSendCodeView.shakeIfEmpty()
                 "发件箱授权码为空".show(context)
                 return@setOnClickListener
             }
 
             val inbox = binding.emailInboxView.text.toString()
             if (inbox.isBlank()) {
+                binding.emailInboxView.shakeIfEmpty()
                 "收件箱地址为空".show(context)
                 return@setOnClickListener
             }
@@ -145,10 +112,12 @@ class MessageChannelActivity : KotlinBaseActivity<ActivityMessageChannelBinding>
                 return@setOnClickListener
             }
 
-            SaveKeyValues.putValue(
-                Constant.MESSAGE_TITLE_KEY, binding.messageTitleView.text.toString().trim()
-            )
-            DatabaseWrapper.insertConfig(outbox, authCode, inbox)
+            val cacheObj = JsonObject().apply {
+                addProperty("outbox", outbox)
+                addProperty("authCode", binding.emailSendCodeView.text.toString())
+                addProperty("inbox", binding.emailInboxView.text.toString())
+            }
+            ConfigStore.get().save(Constant.EMAIL_CONFIG_KEY, cacheObj)
 
             sendTestEmail()
         }
@@ -159,17 +128,21 @@ class MessageChannelActivity : KotlinBaseActivity<ActivityMessageChannelBinding>
             appendLine("你好！")
             append("这是来自 DailyTask 的测试消息 🎉")
         }
-        messageViewModel.sendMessage(
-            message,
-            onLoading = {
-                if (isFinishing || isDestroyed) return@sendMessage
-                LoadingDialog.show(this, "消息发送中，请稍后...")
-            },
+        LoadingDialog.show(this, "消息发送中，请稍后...")
+        MessageDispatcher.sendMessage(
+            "测试消息", message,
+            channelOverride = 1,
             onSuccess = {
                 if (isFinishing || isDestroyed) return@sendMessage
                 LoadingDialog.dismiss()
+
+                SaveKeyValues.saveString(
+                    Constant.MESSAGE_TITLE_KEY, binding.messageTitleView.text.toString().trim()
+                )
+
+                SaveKeyValues.saveInt(Constant.MSG_CHANNEL_KEY, 1)
             },
-            onFailed = {
+            onFailure = {
                 if (isFinishing || isDestroyed) return@sendMessage
                 LoadingDialog.dismiss()
                 it.show(this)
@@ -180,21 +153,27 @@ class MessageChannelActivity : KotlinBaseActivity<ActivityMessageChannelBinding>
         MaterialAlertDialogBuilder(this)
             .setTitle("测试邮件")
             .setMessage("QQ邮箱配置完成，可以发送QQ邮件。\n\n是否继续？")
-            .setCancelable(false) // 禁止点击外部关闭
+            .setCancelable(false)
             .setPositiveButton("继续") { _, _ ->
                 LoadingDialog.show(context, "邮件发送中，请稍后....")
-                emailManager.sendEmail(
+                MessageDispatcher.sendMessage(
                     "邮箱测试", "这是一封测试邮件，不必关注",
-                    true,
+                    channelOverride = 0,
                     onSuccess = {
                         LoadingDialog.dismiss()
                         "发送成功，请注意查收".show(context)
+
+                        SaveKeyValues.saveString(
+                            Constant.MESSAGE_TITLE_KEY,
+                            binding.messageTitleView.text.toString().trim()
+                        )
+
+                        SaveKeyValues.saveInt(Constant.MSG_CHANNEL_KEY, 0)
                     },
                     onFailure = {
                         LoadingDialog.dismiss()
                         "发送失败：${it}".show(context)
-                    }
-                )
+                    })
             }.setNegativeButton("取消", null).show()
     }
 }
