@@ -3,17 +3,75 @@ name: Build and Release APK
 on:
   push:
     branches: [ main, master ]
+  schedule:
+    # 每小时第 17 分钟检查一次上游仓库（UTC），有更新才构建
+    - cron: '17 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: build-and-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: AndroidCoderPeng/DailyTask
+  UPSTREAM_BRANCH: master
+
 jobs:
+  sync-upstream:
+    # push 触发时无需同步，直接构建
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      updated: ${{ steps.merge.outputs.updated }}
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.repository.default_branch }}
+        fetch-depth: 0
+
+    - name: Merge upstream
+      id: merge
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+        git fetch --no-tags upstream "${UPSTREAM_BRANCH}"
+
+        if git merge-base --is-ancestor "upstream/${UPSTREAM_BRANCH}" HEAD; then
+          echo "上游没有新提交，跳过本次构建"
+          echo "updated=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "上游新增提交："
+        git log --oneline "HEAD..upstream/${UPSTREAM_BRANCH}"
+
+        if ! git merge --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+          echo "::error::自动合并上游失败（存在冲突），请在本地执行 git fetch upstream && git merge upstream/master 手动解决"
+          exit 1
+        fi
+
+        git push origin "HEAD:${GITHUB_REF_NAME}"
+        echo "updated=true" >> "$GITHUB_OUTPUT"
+
   build-and-release:
+    needs: sync-upstream
+    if: |
+      always() &&
+      needs.sync-upstream.result != 'failure' &&
+      needs.sync-upstream.result != 'cancelled' &&
+      (github.event_name != 'schedule' || needs.sync-upstream.outputs.updated == 'true')
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event_name == 'push' && github.sha || github.event.repository.default_branch }}
 
     - name: Set up JDK 17
       uses: actions/setup-java@v4
