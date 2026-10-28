@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
@@ -17,12 +20,17 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
+        cache: 'gradle'
 
     - name: Set up Android SDK
       uses: android-actions/setup-android@v3
       with:
-        sdk-version: '36'
-        ndk-version: '21.4.7075529'
+        packages: >-
+          platform-tools
+          platforms;android-36
+          build-tools;36.0.0
+          ndk;21.4.7075529
+          cmake;3.22.1
 
     - name: Make gradlew executable
       run: chmod +x ./gradlew
@@ -33,7 +41,7 @@ jobs:
     - name: Get version name
       id: get_version
       run: |
-        VERSION_NAME="2.3.1.0"
+        VERSION_NAME=$(grep -m1 "versionName '" app/build.gradle | sed "s/.*versionName '\(.*\)'/\1/")
         TIMESTAMP=$(date +"%Y%m%d%H%M%S")
         echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
         echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
@@ -45,30 +53,11 @@ jobs:
         ls -la app/build/outputs/apk/
         ls -la app/build/outputs/apk/release/
 
-    - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Create Release and upload APK
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ steps.get_version.outputs.unique_tag }}
-        release_name: Release ${{ steps.get_version.outputs.unique_tag }}
+        name: Release ${{ steps.get_version.outputs.unique_tag }}
+        files: app/build/outputs/apk/release/*.apk
         draft: false
         prerelease: false
-
-    - name: Find APK file
-      id: find_apk
-      run: |
-        APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -1)
-        echo "apk_file=$APK_FILE" >> $GITHUB_OUTPUT
-        echo "Found APK: $APK_FILE"
-
-    - name: Upload APK to Release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ${{ steps.find_apk.outputs.apk_file }}
-        asset_name: DailyTask-${{ steps.get_version.outputs.version_name }}-${{ steps.get_version.outputs.timestamp }}.apk
-        asset_content_type: application/vnd.android.package-archive
