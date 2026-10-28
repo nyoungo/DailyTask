@@ -1,8 +1,8 @@
 package com.pengxh.daily.app.retrofit
 
+import com.pengxh.daily.app.utils.AppConfig
 import com.pengxh.daily.app.utils.Constant
 import com.pengxh.kt.lite.utils.RetrofitFactory
-import com.pengxh.kt.lite.utils.SaveKeyValues
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -15,7 +15,7 @@ object RetrofitServiceManager {
         RetrofitFactory.createRetrofit<RetrofitService>(Constant.WX_WEB_HOOK_URL)
     }
 
-    suspend fun sendMessage(content: String): String {
+    suspend fun sendMessage(content: String, webhookKeyOverride: String? = null): String {
         val jsonBody = JSONObject().apply {
             put("msgtype", "text")
             put("text", JSONObject().apply {
@@ -27,7 +27,7 @@ object RetrofitServiceManager {
             .toRequestBody("application/json; charset=utf-8".toMediaType())
 
         val keyMap = HashMap<String, String>()
-        keyMap["key"] = SaveKeyValues.loadString(Constant.WX_WEB_HOOK_KEY, "")
+        keyMap["key"] = webhookKeyOverride ?: AppConfig.loadString(Constant.WX_WEB_HOOK_KEY, "")
         return api.sendMessage(requestBody, keyMap).string()
     }
 
@@ -63,7 +63,7 @@ object RetrofitServiceManager {
             .toRequestBody("application/json; charset=utf-8".toMediaType())
 
         val keyMap = HashMap<String, String>()
-        keyMap["key"] = SaveKeyValues.loadString(Constant.WX_WEB_HOOK_KEY, "")
+        keyMap["key"] = AppConfig.loadString(Constant.WX_WEB_HOOK_KEY, "")
         return api.sendMessage(requestBody, keyMap).string()
     }
 }

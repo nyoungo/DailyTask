@@ -1,7 +1,5 @@
 package com.pengxh.daily.app.utils
 
-import com.pengxh.kt.lite.utils.SaveKeyValues
-
 /**
  * @author: Pengxh
  * @email: 290677893@qq.com
@@ -12,6 +10,7 @@ object Constant {
     // SharedPreferences 键
     // ============================================================
     const val RESET_TIME_KEY = "RESET_TIME_KEY" // 任务重置时间点(Int)
+    const val TASK_SCHEDULER_RUNNING_KEY = "TASK_SCHEDULER_RUNNING_KEY" // 任务调度器是否正在运行(Boolean)
     const val STAY_OVERTIME_KEY = "STAY_OVERTIME_KEY" // 打卡停留在目标APP的时间(Int)
     const val TIME_RANGE_KEY = "TIME_RANGE_KEY" // 随机时间范围[0,range](Int)
     const val MSG_CHANNEL_KEY = "MSG_CHANNEL_KEY" // 消息渠道：0-邮件，1-企业微信(Int)
@@ -33,6 +32,7 @@ object Constant {
     // 不导出的sp缓存
     const val LAST_RESET_DATE_KEY = "LAST_RESET_DATE_KEY"
     const val RESULT_SOURCE_KEY = "RESULT_SOURCE_KEY"
+    const val REMOTE_MASK_MODE_KEY = "REMOTE_MASK_MODE_KEY"
 
     // ============================================================
     // ConfigStore 键
@@ -73,7 +73,7 @@ object Constant {
 
     // 目标APP
     fun getTargetApp(): String {
-        return when (SaveKeyValues.loadInt(TARGET_APP_KEY, 0)) {
+        return when (AppConfig.loadInt(TARGET_APP_KEY, 0)) {
             0 -> DING_DING
             1 -> WEWORK
             2 -> FEI_SHU

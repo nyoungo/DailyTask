@@ -6,6 +6,7 @@ import android.app.Service
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -16,17 +17,28 @@ import com.pengxh.daily.app.databinding.WindowFloatingBinding
 import com.pengxh.daily.app.utils.Constant
 import com.pengxh.daily.app.utils.FloatingWindowController
 import com.pengxh.daily.app.utils.MessageDispatcher
-import com.pengxh.kt.lite.utils.SaveKeyValues
+import com.pengxh.daily.app.service.ForegroundRunningService
+import com.pengxh.daily.app.utils.AppConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 
 class FloatingWindowService : Service(), CoroutineScope by CoroutineScope(Dispatchers.Main) {
+
+    companion object {
+        private const val MEMORY_WARNING_INTERVAL_MILLIS = 30 * 60 * 1000L
+        private val powerSaveModeUpdates = Channel<Unit>(Channel.CONFLATED)
+
+        fun notifyPowerSaveModeChanged() {
+            powerSaveModeUpdates.trySend(Unit)
+        }
+    }
 
     private val kTag = "FloatingWindowService"
     private val windowManager by lazy { getSystemService(WindowManager::class.java) }
@@ -38,6 +50,7 @@ class FloatingWindowService : Service(), CoroutineScope by CoroutineScope(Dispat
     private var initialTouchX = 0f
     private var initialTouchY = 0f
     private var memoryMonitorJob: Job? = null
+    private var lastMemoryWarningTime: Long? = null
 
     override fun onBind(intent: Intent?): IBinder? {
         return null
@@ -89,7 +102,7 @@ class FloatingWindowService : Service(), CoroutineScope by CoroutineScope(Dispat
             FloatingWindowController.visibility.collect { visible ->
                 if (visible) {
                     binding.root.alpha = 1.0f
-                    val time = SaveKeyValues.loadInt(
+                    val time = AppConfig.loadInt(
                         Constant.STAY_OVERTIME_KEY, Constant.DEFAULT_OVER_TIME
                     )
                     binding.timeView.text = "${time}s"
@@ -101,7 +114,7 @@ class FloatingWindowService : Service(), CoroutineScope by CoroutineScope(Dispat
         }
 
         // 获取目标应用任务超时时间
-        val time = SaveKeyValues.loadInt(Constant.STAY_OVERTIME_KEY, Constant.DEFAULT_OVER_TIME)
+        val time = AppConfig.loadInt(Constant.STAY_OVERTIME_KEY, Constant.DEFAULT_OVER_TIME)
         binding.timeView.text = "${time}s"
 
         // 移动悬浮窗
@@ -111,18 +124,16 @@ class FloatingWindowService : Service(), CoroutineScope by CoroutineScope(Dispat
     }
 
     private fun startMemoryMonitoring() {
-        val mode = SaveKeyValues.loadBoolean(Constant.POWER_SAVE_MODE_KEY, false)
-        val interval = if (mode) {
-            60_000L
-        } else {
-            1_000L
-        }
         memoryMonitorJob = launch {
             // 立即更新一次
             updateMemoryInfo()
 
             while (isActive) {
-                delay(interval)
+                val mode = AppConfig.loadBoolean(Constant.POWER_SAVE_MODE_KEY, false)
+                val interval = if (mode) 60_000L else 1_000L
+                withTimeoutOrNull(interval) {
+                    powerSaveModeUpdates.receive()
+                }
                 updateMemoryInfo()
             }
         }
@@ -137,11 +148,27 @@ class FloatingWindowService : Service(), CoroutineScope by CoroutineScope(Dispat
             val availMem = memoryInfo.availMem
             val usedMem = totalMem - availMem
             val usagePercent = ((usedMem * 100.0) / totalMem).toInt()
+            // availMem 包含大量可瞬间回收的缓存，用 total-avail 算"已用"会严重虚高，
+            // 正常手机几乎必然 ≥90% 而误报。改用系统自身的低内存判定：可用内存低于系统临界值。
+            val lowMemory = memoryInfo.availMem <= memoryInfo.threshold
 
             withContext(Dispatchers.Main) {
                 binding.waveProgressView.setProgress(usagePercent)
-                if (usagePercent >= 90) {
-                    MessageDispatcher.sendMessage("内存使用预警", "当前内存使用已超过90%，请关注设备运行情况")
+                if (lowMemory) {
+                    val now = SystemClock.elapsedRealtime()
+                    val lastWarning = lastMemoryWarningTime
+                    if (lastWarning == null || now - lastWarning >= MEMORY_WARNING_INTERVAL_MILLIS) {
+                        MessageDispatcher.sendMessage(
+                            "内存使用预警",
+                            "系统可用内存已低于临界值（低内存状态），请关注设备运行情况",
+                            onFailure = {
+                                ForegroundRunningService.emitNotificationText("内存预警发送失败：$it")
+                            }
+                        )
+                        lastMemoryWarningTime = now
+                    }
+                } else {
+                    lastMemoryWarningTime = null
                 }
             }
         }

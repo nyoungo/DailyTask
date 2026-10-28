@@ -13,11 +13,11 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.pengxh.daily.app.R
+import com.pengxh.daily.app.utils.AppConfig
 import com.pengxh.daily.app.utils.Constant
-import com.pengxh.daily.app.utils.LogFileManager
+import com.pengxh.daily.app.utils.DailyResetAlarmScheduler
 import com.pengxh.daily.app.utils.MessageDispatcher
 import com.pengxh.daily.app.utils.TaskScheduler
-import com.pengxh.kt.lite.utils.SaveKeyValues
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -68,7 +68,7 @@ class ForegroundRunningService : Service() {
         }
     }
 
-    private val batteryManager by lazy { getSystemService(BatteryManager::class.java) }
+    private val batteryManager: BatteryManager? by lazy { getSystemService(BatteryManager::class.java) }
     private var lastRemindTime = 0L
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -77,8 +77,19 @@ class ForegroundRunningService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        // 注入协程作用域给 TaskScheduler
-        TaskScheduler.attach(serviceScope)
+        /***
+         * 恢复判断必须与 checkAndTriggerReset 对齐：
+         *  - 仍在运行则恢复；
+         *  - 或"曾运行 且 今天尚未跑完 且 允许自动循环"才恢复。
+         */
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date())
+        val shouldResumeTask = TaskScheduler.isRunning() ||
+                (AppConfig.loadBoolean(Constant.TASK_SCHEDULER_RUNNING_KEY, false)
+                        && AppConfig.loadString(Constant.LAST_RESET_DATE_KEY, "") != today
+                        && AppConfig.loadBoolean(Constant.TASK_AUTO_RECYCLE_KEY, true))
+        TaskScheduler.attach(serviceScope, shouldResumeTask)
+        checkAndTriggerReset()
+        DailyResetAlarmScheduler.schedule(this)
 
         val name = "${resources.getString(R.string.app_name)}前台服务"
         val channel = NotificationChannel(
@@ -124,6 +135,8 @@ class ForegroundRunningService : Service() {
         serviceScope.launch {
             resetTaskTime.collect {
                 updateResetTimeView()
+                DailyResetAlarmScheduler.schedule(this@ForegroundRunningService)
+                TaskScheduler.notifyResetWaiters()
             }
         }
 
@@ -145,6 +158,8 @@ class ForegroundRunningService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        checkAndTriggerReset()
+        DailyResetAlarmScheduler.schedule(this)
         checkLowBattery()
         return START_STICKY
     }
@@ -165,7 +180,7 @@ class ForegroundRunningService : Service() {
     }
 
     private fun updateResetTimeView() {
-        val resetHour = SaveKeyValues.loadInt(Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR)
+        val resetHour = AppConfig.loadInt(Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR)
         val seconds = resetTaskSeconds(resetHour)
 
         val hours = seconds / 3600
@@ -206,14 +221,18 @@ class ForegroundRunningService : Service() {
     }
 
     private fun checkLowBattery() {
-        val battery = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val battery = batteryManager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            ?: return  // 读不到电量就不提醒，绝不抛异常，避免前台服务启动失败
         if (battery < 20) {
             val currentTime = System.currentTimeMillis()
             if (currentTime - lastRemindTime < 5 * 60 * 1000) {
                 return
             }
 
-            MessageDispatcher.sendMessage("低电量提醒", "手机电量低于20%，请及时充电")
+            MessageDispatcher.sendMessage(
+                "低电量提醒", "手机电量低于20%，请及时充电",
+                onFailure = { emitNotificationText("低电量提醒发送失败：$it") }
+            )
             lastRemindTime = currentTime
         } else {
             // 电量恢复到20%以上，重置提醒时间
@@ -226,27 +245,15 @@ class ForegroundRunningService : Service() {
      * 作为协程 delay 的兜底，防止长时间运行后协程异常退出导致任务不重置
      */
     private fun checkAndTriggerReset() {
-        val resetHour = SaveKeyValues.loadInt(Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR)
-        val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-
-        // 只在 resetHour ~ resetHour+1 这个范围触发检查
-        if (currentHour !in resetHour..(resetHour + 1)) {
-            return
-        }
-
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date())
-        val lastResetDate = SaveKeyValues.loadString(Constant.LAST_RESET_DATE_KEY, "")
+        val lastResetDate = AppConfig.loadString(Constant.LAST_RESET_DATE_KEY, "")
 
         // 今天已重置，跳过
         if (lastResetDate == today) {
             return
         }
 
-        // 标记今天已重置，防止重复触发
-        SaveKeyValues.saveString(Constant.LAST_RESET_DATE_KEY, today)
-
-        // 任务重置
-        if (SaveKeyValues.loadBoolean(Constant.TASK_AUTO_RECYCLE_KEY, true)) {
+        if (AppConfig.loadBoolean(Constant.TASK_AUTO_RECYCLE_KEY, true)) {
             TaskScheduler.startTask()
         }
     }

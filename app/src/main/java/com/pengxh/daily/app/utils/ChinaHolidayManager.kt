@@ -3,6 +3,7 @@ package com.pengxh.daily.app.utils
 import android.util.Log
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -15,15 +16,17 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okio.IOException
+import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 object ChinaHolidayManager {
     private const val kTag = "ChinaHolidayManager"
-    private const val CACHE_KEY = "holidayConfig"
+    private const val LEGACY_CACHE_KEY = "holidayConfig"
+    private const val CACHE_KEY_PREFIX = "holidayConfig_"
 
     private val _syncResult = MutableSharedFlow<SyncResult>(extraBufferCapacity = 1)
     val syncResult = _syncResult.asSharedFlow()
@@ -42,7 +45,7 @@ object ChinaHolidayManager {
         data class Error(val message: String) : SyncResult()
     }
 
-    private val scope = CoroutineScope(SupervisorJob())
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -51,52 +54,125 @@ object ChinaHolidayManager {
         .build()
 
     @Volatile
-    private var holidayDates: Set<LocalDate> = emptySet()
+    private var holidayDatesByYear: Map<Int, Set<LocalDate>> = emptyMap()
 
     @Volatile
-    private var workdayDates: Set<LocalDate> = emptySet()
+    private var workdayDatesByYear: Map<Int, Set<LocalDate>> = emptyMap()
 
-    private val isSyncing = AtomicBoolean(false)
+    private val syncLock = Any()
+    private var isSyncing = false
+    private var forceRefreshPending = false
     private val dataMutex = Mutex()
 
-    fun updateChinaHolidayData() {
-        if (!isSyncing.compareAndSet(false, true)) {
-            Log.w(kTag, "Already syncing, skip duplicate request")
-            return
+    fun updateChinaHolidayData(forceRefresh: Boolean = false) {
+        val shouldStart = synchronized(syncLock) {
+            if (isSyncing) {
+                if (forceRefresh) {
+                    forceRefreshPending = true
+                }
+                Log.w(kTag, "Already syncing, ${if (forceRefresh) "queue" else "skip"} request")
+                false
+            } else {
+                isSyncing = true
+                true
+            }
         }
+
+        if (shouldStart) {
+            launchSync(forceRefresh)
+        }
+    }
+
+    private fun launchSync(forceRefresh: Boolean) {
         scope.launch {
             try {
-                tryLoadFromCache()
-                if (holidayDates.isNotEmpty()) return@launch
-                fetchAndParse()
+                synchronizeYears(forceRefresh)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(kTag, "Holiday data sync failed", e)
+                if (forceRefresh) {
+                    notifyError("节假日数据同步失败：${e.message ?: e.javaClass.simpleName}")
+                }
             } finally {
-                isSyncing.set(false)
+                val runPendingRefresh = synchronized(syncLock) {
+                    if (forceRefreshPending) {
+                        forceRefreshPending = false
+                        true
+                    } else {
+                        isSyncing = false
+                        false
+                    }
+                }
+                if (runPendingRefresh) {
+                    launchSync(forceRefresh = true)
+                }
             }
         }
     }
 
-    private suspend fun tryLoadFromCache() {
-        return withContext(Dispatchers.IO) {
-            val cache = ConfigStore.get().load(CACHE_KEY)
-            if (cache.size() == 0) return@withContext
+    private suspend fun synchronizeYears(forceRefresh: Boolean) {
+        val currentYear = LocalDate.now().year
+        val years = listOf(currentYear, currentYear + 1)
+        val cachedData = mutableMapOf<Int, CachedHolidayData>()
 
-            val cachedYear = cache.get("year")?.asInt ?: return@withContext
-            val currentYear = LocalDate.now().year
-            if (cachedYear != currentYear) {
-                Log.d(kTag, "Cache year $cachedYear != current $currentYear, will re-fetch")
-                return@withContext
+        for (year in years) {
+            loadFromCache(year)?.let { cachedData[year] = it }
+        }
+
+        val yearsToFetch = if (forceRefresh) {
+            years
+        } else {
+            years.filterNot { it in cachedData }
+        }
+        val updatedData = mutableMapOf<Int, CachedHolidayData>()
+
+        for (year in yearsToFetch) {
+            val json = fetchHolidayJson(year)
+            val data = json?.let { handleHolidayData(year, it) }
+            if (data != null) {
+                updatedData[year] = data
+                cachedData[year] = data
+            } else {
+                Log.w(kTag, "No usable holiday data returned for $year")
+            }
+        }
+
+        if (forceRefresh) {
+            reportRefreshResult(currentYear, years.last(), updatedData, cachedData)
+        }
+    }
+
+    private suspend fun loadFromCache(year: Int): CachedHolidayData? {
+        return withContext(Dispatchers.IO) {
+            val configStore = ConfigStore.get()
+            val cache = configStore.load(cacheKey(year)).takeIf { it.size() > 0 }
+                ?: configStore.load(LEGACY_CACHE_KEY).takeIf { it.size() > 0 }
+                ?: return@withContext null
+
+            val cachedYear = cache.get("year")?.takeIf { it.isJsonPrimitive }?.asInt
+                ?: return@withContext null
+            if (cachedYear != year) {
+                Log.d(kTag, "Cache year $cachedYear != requested $year, will re-fetch")
+                return@withContext null
             }
 
             dataMutex.withLock {
-                parseJsonToMemory(cache)
+                updateMemoryForYear(year, parseJsonForYear(cache))
             }
-            notifySuccess("节假日数据同步完成（缓存）")
+            val holidayDates = holidayDatesByYear[year].orEmpty()
+            val workdayDates = workdayDatesByYear[year].orEmpty()
+            if (holidayDates.isEmpty() && workdayDates.isEmpty()) {
+                return@withContext null
+            }
+
+            val updatedAt = cache.get("updatedAt")?.takeIf { it.isJsonPrimitive }?.asLong
+            CachedHolidayData(updatedAt)
         }
     }
 
-    private suspend fun fetchAndParse() {
-        val currentYear = LocalDate.now().year
-        val urls = cdnUrlTemplates.map { String.format(it, currentYear) }
+    private suspend fun fetchHolidayJson(year: Int): String? {
+        val urls = cdnUrlTemplates.map { String.format(it, year) }
 
         var resultJson: String? = null
 
@@ -113,16 +189,16 @@ object ChinaHolidayManager {
         }
 
         if (resultJson == null) {
-            notifyError("节假日数据下载失败：所有镜像源均不可用")
-            return
+            return null
         }
 
-        handleHolidayData(resultJson)
+        return resultJson
     }
 
     private suspend fun downloadJson(urlString: String): SyncResult {
         return withContext(Dispatchers.IO) {
             try {
+                Log.d(kTag, "Requesting holiday data: $urlString")
                 val request = Request.Builder().url(urlString).build()
                 okHttpClient.newCall(request).execute().use { response ->
                     val body = response.body.string()
@@ -138,44 +214,117 @@ object ChinaHolidayManager {
                         SyncResult.Success(body)
                     }
                 }
-            } catch (e: IOException) {
-                SyncResult.Error(e.message ?: "Unknown")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                SyncResult.Error(e.message ?: e.javaClass.simpleName)
             }
         }
     }
 
-    private suspend fun handleHolidayData(rawJson: String) {
+    private suspend fun handleHolidayData(
+        year: Int,
+        rawJson: String
+    ): CachedHolidayData? {
         val root = try {
             JsonParser.parseString(rawJson).asJsonObject
         } catch (e: Exception) {
             Log.e(kTag, "JSON parse failed", e)
-            notifyError("节假日数据解析失败：JSON 无效")
-            return
+            return null
+        }
+
+        val data = parseJsonForYear(root)
+        if (data.holidays.isEmpty() && data.workdays.isEmpty()) {
+            Log.w(kTag, "Holiday data for $year contains no valid dates")
+            return null
         }
 
         dataMutex.withLock {
-            parseJsonToMemory(root)
+            updateMemoryForYear(year, data)
         }
 
         // 写入缓存
+        val updatedAt = System.currentTimeMillis()
         val cacheObj = JsonObject().apply {
-            addProperty("year", LocalDate.now().year)
+            addProperty("year", year)
+            addProperty("updatedAt", updatedAt)
             add("holidays", root.get("holidays"))
             add("workdays", root.get("workdays"))
         }
-        ConfigStore.get().save(CACHE_KEY, cacheObj)
+        ConfigStore.get().save(cacheKey(year), cacheObj)
 
-        notifySuccess("节假日数据同步完成（网络）")
+        return CachedHolidayData(updatedAt)
     }
 
-    private fun parseJsonToMemory(root: JsonObject) {
+    private suspend fun reportRefreshResult(
+        currentYear: Int,
+        nextYear: Int,
+        updatedData: Map<Int, CachedHolidayData>,
+        cachedData: Map<Int, CachedHolidayData>
+    ) {
+        val currentUpdated = updatedData[currentYear]
+        val currentCached = cachedData[currentYear]
+        val nextUpdated = updatedData[nextYear]
+        val nextCached = cachedData[nextYear]
+        val nextYearStatus = when {
+            nextUpdated != null -> "；已预载${nextYear}年数据"
+            nextCached != null -> "；保留${nextYear}年缓存（${formatCacheTime(nextCached)}）"
+            else -> "；${nextYear}年数据暂不可用（可能尚未发布）"
+        }
+
+        when {
+            currentUpdated != null -> notifySuccess(
+                "节假日数据更新完成（${currentYear}年，${formatCacheTime(currentUpdated)}）" +
+                        nextYearStatus
+            )
+
+            currentCached != null -> notifySuccess(
+                "当年网络刷新失败，已回退到${currentYear}年缓存（" +
+                        "${formatCacheTime(currentCached)}）$nextYearStatus"
+            )
+
+            else -> notifyError(
+                "当前年度节假日数据刷新失败，且没有可用缓存$nextYearStatus"
+            )
+        }
+    }
+
+    private fun formatCacheTime(data: CachedHolidayData): String {
+        return data.updatedAtMillis?.let(::formatTimestamp) ?: "更新时间未知"
+    }
+
+    private fun formatTimestamp(timestamp: Long): String {
+        return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(Date(timestamp))
+    }
+
+    private fun cacheKey(year: Int): String = "$CACHE_KEY_PREFIX$year"
+
+    private data class CachedHolidayData(
+        val updatedAtMillis: Long?
+    )
+
+    private data class HolidayYearData(
+        val holidays: Set<LocalDate>,
+        val workdays: Set<LocalDate>
+    )
+
+    private fun parseJsonForYear(root: JsonObject): HolidayYearData {
         val holidaysObj = root.getAsJsonObject("holidays") ?: JsonObject()
-        holidayDates = holidaysObj.keySet().mapNotNull { parseDate(it) }.toSet()
+        val holidays = holidaysObj.keySet().mapNotNull { parseDate(it) }.toSet()
 
         val workdaysObj = root.getAsJsonObject("workdays") ?: JsonObject()
-        workdayDates = workdaysObj.keySet().mapNotNull { parseDate(it) }.toSet()
+        val workdays = workdaysObj.keySet().mapNotNull { parseDate(it) }.toSet()
 
-        Log.d(kTag, "Parsed ${holidayDates.size} holidays, ${workdayDates.size} workdays")
+        return HolidayYearData(holidays, workdays)
+    }
+
+    private fun updateMemoryForYear(year: Int, data: HolidayYearData) {
+        holidayDatesByYear = holidayDatesByYear + (year to data.holidays)
+        workdayDatesByYear = workdayDatesByYear + (year to data.workdays)
+        Log.d(
+            kTag,
+            "Parsed $year: ${data.holidays.size} holidays, ${data.workdays.size} workdays"
+        )
     }
 
     private fun parseDate(dateStr: String): LocalDate? {
@@ -191,14 +340,14 @@ object ChinaHolidayManager {
      * 给定日期是否为法定节假日（含调休放假，不含普通周末）
      * */
     fun isHoliday(date: LocalDate): Boolean {
-        return date in holidayDates
+        return date in holidayDatesByYear[date.year].orEmpty()
     }
 
     /**
      * 给定日期是否为调休补班日
      * */
     fun isWorkday(date: LocalDate): Boolean {
-        return date in workdayDates
+        return date in workdayDatesByYear[date.year].orEmpty()
     }
 
     fun cancel() {
