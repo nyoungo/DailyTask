@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/rootView"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -26,11 +25,12 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:orientation="vertical"
-            android:paddingHorizontal="@dimen/dp_16">
+            android:paddingHorizontal="@dimen/padding_2x">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginBottom="@dimen/margin_half"
                 android:text="任务目标"
                 android:textAppearance="@style/TextAppearance.Material3.BodySmall.Emphasized"
                 android:textColor="#ABABAB" />
@@ -38,7 +38,6 @@
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/dp_4"
                 app:cardBackgroundColor="@color/white"
                 app:strokeColor="@color/border_color">
 
@@ -46,150 +45,84 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:divider="@drawable/divider_line"
-                    android:dividerPadding="@dimen/dp_16"
+                    android:dividerPadding="@dimen/padding_2x"
                     android:orientation="vertical"
                     android:showDividers="middle">
 
-                    <RelativeLayout
-                        android:id="@+id/targetAppLayout"
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/targetAppItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
+                        app:itemIcon="@drawable/ic_setting_target"
+                        app:itemRightTextColor="@color/theme_color"
+                        app:itemRightType="text"
+                        app:itemTitle="目标应用" />
 
-                        <com.google.android.material.textview.MaterialTextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:text="目标应用"
-                            android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                        <androidx.constraintlayout.utils.widget.ImageFilterView
-                            android:id="@+id/iconView"
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true"
-                            android:background="#F1F1F1"
-                            app:roundPercent="1.0"
-                            tools:src="@drawable/ic_ding_ding" />
-                    </RelativeLayout>
-
-                    <RelativeLayout
-                        android:id="@+id/msgChannelLayout"
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/msgChannelItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
-
-                        <LinearLayout
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_centerVertical="true"
-                                android:text="消息渠道"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:singleLine="true"
-                                android:text="打卡结果回推渠道"
-                                android:textSize="@dimen/sp_10" />
-                        </LinearLayout>
-
-                        <com.google.android.material.textview.MaterialTextView
-                            android:id="@+id/channelView"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true"
-                            android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
-                            android:textColor="@color/theme_color"
-                            tools:text="@string/app_name" />
-                    </RelativeLayout>
+                        app:itemDesc="打卡结果回推渠道"
+                        app:itemIcon="@drawable/ic_setting_message"
+                        app:itemRightType="text"
+                        app:itemTitle="消息渠道" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="vertical"
-                        android:paddingHorizontal="@dimen/dp_16"
+                        android:paddingHorizontal="@dimen/padding_2x"
                         android:paddingVertical="@dimen/dp_12">
 
-                        <com.google.android.material.textview.MaterialTextView
+                        <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="结果来源"
                             android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
 
-                        <com.google.android.material.textview.MaterialTextView
+                        <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="用哪种方式判定「打卡成功」"
-                            android:textSize="@dimen/sp_10" />
+                            android:textSize="@dimen/smallest_text_size" />
 
-                        <RadioGroup
+                        <com.google.android.material.card.MaterialCardView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:orientation="horizontal">
+                            android:layout_marginTop="@dimen/margin"
+                            app:cardBackgroundColor="@color/back_ground_color"
+                            app:strokeWidth="0dp">
 
-                            <com.google.android.material.radiobutton.MaterialRadioButton
-                                android:id="@+id/noticeRadioButton"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:text="通知监听"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.radiobutton.MaterialRadioButton
-                                android:id="@+id/captureRadioButton"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:text="截屏服务"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-                        </RadioGroup>
-                    </LinearLayout>
-
-                    <RelativeLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
-
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:layout_marginEnd="@dimen/dp_72"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="返回截图"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.textview.MaterialTextView
+                            <RadioGroup
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:singleLine="true"
-                                android:text="开启后，【DT#打卡】倒计时结束会截屏并发送结果"
-                                android:textSize="@dimen/sp_10" />
-                        </LinearLayout>
+                                android:layout_margin="@dimen/margin_half"
+                                android:orientation="horizontal">
 
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/remoteClockInCaptureSwitch"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true" />
-                    </RelativeLayout>
+                                <com.google.android.material.radiobutton.MaterialRadioButton
+                                    android:id="@+id/noticeRadioButton"
+                                    style="@style/CustomRadioButtonStyle"
+                                    android:layout_width="0dp"
+                                    android:layout_weight="1"
+                                    android:text="通知监听" />
+
+                                <com.google.android.material.radiobutton.MaterialRadioButton
+                                    android:id="@+id/captureRadioButton"
+                                    style="@style/CustomRadioButtonStyle"
+                                    android:layout_width="0dp"
+                                    android:layout_weight="1"
+                                    android:text="截屏服务" />
+                            </RadioGroup>
+                        </com.google.android.material.card.MaterialCardView>
+                    </LinearLayout>
+
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/remoteClockInCaptureItem"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        app:itemDesc="开启后，【DT#打卡】倒计时结束会截屏并发送结果"
+                        app:itemRightType="toggle"
+                        app:itemTitle="返回截图" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
@@ -197,7 +130,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/dp_12"
-                android:layout_marginBottom="@dimen/dp_4"
+                android:layout_marginBottom="@dimen/margin_half"
                 android:text="服务与权限"
                 android:textAppearance="@style/TextAppearance.Material3.BodySmall.Emphasized"
                 android:textColor="#ABABAB" />
@@ -212,112 +145,34 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:divider="@drawable/divider_line"
-                    android:dividerPadding="@dimen/dp_16"
+                    android:dividerPadding="@dimen/padding_2x"
                     android:orientation="vertical"
                     android:showDividers="middle">
 
-                    <RelativeLayout
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/floatingItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
+                        app:itemDesc="核心服务，用于打卡后自动跳回本软件"
+                        app:itemRightType="toggle"
+                        app:itemTitle="悬浮权限" />
 
-                        <LinearLayout
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="悬浮权限"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:id="@+id/floatingTipsView"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="核心服务，用于打卡后自动跳回本软件"
-                                android:textSize="@dimen/sp_10" />
-                        </LinearLayout>
-
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/floatingSwitch"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true" />
-                    </RelativeLayout>
-
-                    <RelativeLayout
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/noticeItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
+                        app:itemDesc="监听打卡结果与远程指令"
+                        app:itemRightType="toggle"
+                        app:itemTitle="通知监听" />
 
-                        <LinearLayout
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="通知监听"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:id="@+id/noticeTipsView"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="监听打卡结果与远程指令"
-                                android:textSize="@dimen/sp_10" />
-                        </LinearLayout>
-
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/noticeSwitch"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true" />
-                    </RelativeLayout>
-
-                    <RelativeLayout
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/captureItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
-
-                        <LinearLayout
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="截屏服务"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:id="@+id/captureTipsView"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="截屏服务未开启，无法获取打卡结果"
-                                android:textColor="@color/failure_color"
-                                android:textSize="@dimen/sp_10" />
-                        </LinearLayout>
-
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/captureSwitch"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true" />
-                    </RelativeLayout>
+                        app:itemDesc="截屏服务未开启，无法获取打卡结果"
+                        app:itemDescColor="@color/failure_color"
+                        app:itemRightType="toggle"
+                        app:itemTitle="截屏服务" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
@@ -325,7 +180,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/dp_12"
-                android:layout_marginBottom="@dimen/dp_4"
+                android:layout_marginBottom="@dimen/margin_half"
                 android:text="行为偏好"
                 android:textAppearance="@style/TextAppearance.Material3.BodySmall.Emphasized"
                 android:textColor="#ABABAB" />
@@ -340,114 +195,33 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:divider="@drawable/divider_line"
-                    android:dividerPadding="@dimen/dp_16"
+                    android:dividerPadding="@dimen/padding_2x"
                     android:orientation="vertical"
                     android:showDividers="middle">
 
-                    <RelativeLayout
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/gestureItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
+                        app:itemDesc="单指上下滑动开启 / 关闭伪灭屏"
+                        app:itemRightType="toggle"
+                        app:itemTitle="手势辅助" />
 
-                        <LinearLayout
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="手势辅助"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_gravity="end"
-                                android:singleLine="true"
-                                android:text="单指上下滑动开启 / 关闭伪灭屏"
-                                android:textSize="@dimen/sp_10" />
-                        </LinearLayout>
-
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/gestureDetectSwitch"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true" />
-                    </RelativeLayout>
-
-                    <RelativeLayout
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/powerSaveItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
+                        app:itemDesc="降低倒计时与蒙层动画刷新频率"
+                        app:itemRightType="toggle"
+                        app:itemTitle="省电模式" />
 
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:layout_marginEnd="@dimen/dp_72"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="省电模式"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:singleLine="true"
-                                android:text="降低倒计时与蒙层动画刷新频率"
-                                android:textSize="@dimen/sp_10" />
-                        </LinearLayout>
-
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/powerSaveSwitch"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true" />
-                    </RelativeLayout>
-
-                    <RelativeLayout
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/backHomeItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
-
-                        <LinearLayout
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="退回桌面"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_gravity="end"
-                                android:singleLine="true"
-                                android:text="打卡结束后先回桌面再启动本软件"
-                                android:textSize="@dimen/sp_10" />
-                        </LinearLayout>
-
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/backToHomeSwitch"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true" />
-                    </RelativeLayout>
+                        app:itemDesc="打卡结束后先回桌面再启动本软件"
+                        app:itemRightType="toggle"
+                        app:itemTitle="退回桌面" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
@@ -455,7 +229,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/dp_12"
-                android:layout_marginBottom="@dimen/dp_4"
+                android:layout_marginBottom="@dimen/margin_half"
                 android:text="任务"
                 android:textAppearance="@style/TextAppearance.Material3.BodySmall.Emphasized"
                 android:textColor="#ABABAB" />
@@ -470,83 +244,27 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:divider="@drawable/divider_line"
-                    android:dividerPadding="@dimen/dp_16"
+                    android:dividerPadding="@dimen/padding_2x"
                     android:orientation="vertical"
                     android:showDividers="middle">
 
-                    <RelativeLayout
-                        android:id="@+id/taskConfigLayout"
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/taskConfigItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
+                        app:itemDesc="重置时间、超时、口令、工作日"
+                        app:itemIcon="@drawable/ic_setting_task"
+                        app:itemRightType="arrow"
+                        app:itemTitle="任务配置" />
 
-                        <LinearLayout
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:gravity="center_vertical"
-                                android:text="任务配置"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_gravity="end"
-                                android:singleLine="true"
-                                android:text="重置时间、超时、口令、工作日"
-                                android:textSize="@dimen/sp_10" />
-                        </LinearLayout>
-
-                        <ImageView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true"
-                            android:background="@drawable/ic_arrow_right" />
-                    </RelativeLayout>
-
-                    <RelativeLayout
-                        android:id="@+id/updateHolidayLayout"
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/updateHolidayItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
-
-                        <LinearLayout
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:gravity="center_vertical"
-                                android:text="更新节假日数据"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_gravity="end"
-                                android:singleLine="true"
-                                android:text="同步当年与次年的法定节假日"
-                                android:textSize="@dimen/sp_10" />
-                        </LinearLayout>
-
-                        <ImageView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true"
-                            android:background="@drawable/ic_arrow_right" />
-                    </RelativeLayout>
+                        app:itemDesc="同步当年与次年的法定节假日"
+                        app:itemIcon="@drawable/ic_setting_holiday"
+                        app:itemRightType="arrow"
+                        app:itemTitle="更新节假日数据" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
@@ -554,7 +272,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/dp_12"
-                android:layout_marginBottom="@dimen/dp_4"
+                android:layout_marginBottom="@dimen/margin_half"
                 android:text="工具"
                 android:textAppearance="@style/TextAppearance.Material3.BodySmall.Emphasized"
                 android:textColor="#ABABAB" />
@@ -569,164 +287,52 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:divider="@drawable/divider_line"
-                    android:dividerPadding="@dimen/dp_16"
+                    android:dividerPadding="@dimen/padding_2x"
                     android:orientation="vertical"
                     android:showDividers="middle">
 
-                    <RelativeLayout
-                        android:id="@+id/commandLayout"
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/commandItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
+                        app:itemIcon="@drawable/ic_setting_command"
+                        app:itemRightType="arrow"
+                        app:itemTitle="全部指令" />
 
-                        <com.google.android.material.textview.MaterialTextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:text="全部指令"
-                            android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                        <ImageView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true"
-                            android:background="@drawable/ic_arrow_right" />
-                    </RelativeLayout>
-
-                    <RelativeLayout
-                        android:id="@+id/openTestLayout"
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/openTestItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
+                        app:itemDesc="验证拉起目标应用"
+                        app:itemIcon="@drawable/ic_setting_evoke"
+                        app:itemRightType="arrow"
+                        app:itemTitle="唤起测试" />
 
-                        <LinearLayout
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:gravity="center_vertical"
-                                android:text="唤起测试"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_gravity="end"
-                                android:singleLine="true"
-                                android:text="验证 QQ / 微信 / 支付宝拉起目标应用"
-                                android:textSize="@dimen/sp_10" />
-                        </LinearLayout>
-
-                        <ImageView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true"
-                            android:background="@drawable/ic_arrow_right" />
-                    </RelativeLayout>
-
-                    <RelativeLayout
-                        android:id="@+id/captureTestLayout"
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/captureTestItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
+                        app:itemDesc="截屏并通过消息渠道发送测试图片"
+                        app:itemIcon="@drawable/ic_setting_capture"
+                        app:itemRightType="arrow"
+                        app:itemTitle="截屏测试" />
 
-                        <LinearLayout
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:gravity="center_vertical"
-                                android:text="截屏测试"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_gravity="end"
-                                android:singleLine="true"
-                                android:text="截屏并通过消息渠道发送测试图片"
-                                android:textSize="@dimen/sp_10" />
-                        </LinearLayout>
-
-                        <ImageView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true"
-                            android:background="@drawable/ic_arrow_right" />
-                    </RelativeLayout>
-
-                    <RelativeLayout
-                        android:id="@+id/sendLogLayout"
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/sendLogItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
+                        app:itemDesc="打包后通过 QQ 发送，便于排查问题"
+                        app:itemIcon="@drawable/ic_setting_log"
+                        app:itemRightType="arrow"
+                        app:itemTitle="发送日志" />
 
-                        <LinearLayout
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:gravity="center_vertical"
-                                android:text="发送日志"
-                                android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_gravity="end"
-                                android:singleLine="true"
-                                android:text="打包后通过 QQ 发送，便于排查问题"
-                                android:textSize="@dimen/sp_10" />
-                        </LinearLayout>
-
-                        <ImageView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true"
-                            android:background="@drawable/ic_arrow_right" />
-                    </RelativeLayout>
-
-                    <RelativeLayout
-                        android:id="@+id/introduceLayout"
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/introduceItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
-
-                        <com.google.android.material.textview.MaterialTextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:text="常见问题"
-                            android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                        <ImageView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true"
-                            android:background="@drawable/ic_arrow_right" />
-                    </RelativeLayout>
+                        app:itemIcon="@drawable/ic_setting_faq"
+                        app:itemRightType="arrow"
+                        app:itemTitle="常见问题" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
@@ -734,7 +340,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/dp_12"
-                android:layout_marginBottom="@dimen/dp_4"
+                android:layout_marginBottom="@dimen/margin_half"
                 android:text="关于"
                 android:textAppearance="@style/TextAppearance.Material3.BodySmall.Emphasized"
                 android:textColor="#ABABAB" />
@@ -742,7 +348,7 @@
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="@dimen/dp_16"
+                android:layout_marginBottom="@dimen/margin_2x"
                 app:cardBackgroundColor="@color/white"
                 app:strokeColor="@color/border_color">
 
@@ -750,55 +356,23 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:divider="@drawable/divider_line"
-                    android:dividerPadding="@dimen/dp_16"
+                    android:dividerPadding="@dimen/padding_2x"
                     android:orientation="vertical"
                     android:showDividers="middle">
 
-                    <RelativeLayout
+                    <com.pengxh.daily.app.widget.SettingItemView
+                        android:id="@+id/versionItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
+                        app:itemRightType="text"
+                        app:itemTitle="当前版本" />
 
-                        <com.google.android.material.textview.MaterialTextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_centerVertical="true"
-                            android:gravity="center_vertical"
-                            android:text="当前版本"
-                            android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                        <com.google.android.material.textview.MaterialTextView
-                            android:id="@+id/appVersion"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true"
-                            android:gravity="center_vertical"
-                            android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-                    </RelativeLayout>
-
-                    <LinearLayout
+                    <com.pengxh.daily.app.widget.SettingItemView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:paddingHorizontal="@dimen/dp_16"
-                        android:paddingVertical="@dimen/dp_12">
-
-                        <com.google.android.material.textview.MaterialTextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:gravity="center_vertical"
-                            android:text="数据存储"
-                            android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
-
-                        <com.google.android.material.textview.MaterialTextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:singleLine="true"
-                            android:text="全部配置保存在本机，不上传服务器"
-                            android:textSize="@dimen/sp_10" />
-                    </LinearLayout>
+                        app:itemDesc="全部配置保存在本机，不上传服务器"
+                        app:itemRightType="none"
+                        app:itemTitle="数据存储" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
         </LinearLayout>
