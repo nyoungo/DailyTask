@@ -78,7 +78,7 @@
                         android:layout_height="match_parent"
                         android:layout_marginVertical="@dimen/margin"
                         android:gravity="center_vertical"
-                        android:hint="点击下方按钮启动今日任务，到点后自动拉起目标应用触发极速打卡。"
+                        android:hint="点击下方按钮启动今日任务，到点后自动拉起目标应用触发极速打卡"
                         android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
                         android:textColor="@color/text_secondary_color" />
 
@@ -226,11 +226,12 @@
                     app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
                     tools:listitem="@layout/item_daily_task_rv_l" />
 
-                <com.pengxh.kt.lite.widget.EmptyView
+                <com.pengxh.daily.app.widget.EmptyView
                     android:id="@+id/emptyView"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:visibility="gone"
+                    app:emptyDesc="还没有任务，先添加一个吧"
                     app:show_reload_button="false" />
             </FrameLayout>
         </LinearLayout>
