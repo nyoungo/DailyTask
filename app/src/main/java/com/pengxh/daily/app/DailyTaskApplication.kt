@@ -1,17 +1,12 @@
 package com.pengxh.daily.app
 
 import android.app.Application
-import android.os.Environment
 import androidx.room.Room.databaseBuilder
 import com.pengxh.daily.app.sqlite.DailyTaskDataBase
 import com.pengxh.daily.app.utils.ChinaHolidayManager
 import com.pengxh.daily.app.utils.AppConfig
-import com.pengxh.daily.app.utils.ConfigStore
 import com.pengxh.daily.app.utils.LogFileManager
 import com.pengxh.daily.app.utils.MessageDispatcher
-import com.pengxh.daily.app.utils.SaveKeyValues
-import java.io.File
-import java.io.IOException
 
 
 /**
@@ -36,22 +31,9 @@ class DailyTaskApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         initApplication(this)
-        SaveKeyValues.initialize(this)
+        AppConfig.initialize(this)
         MessageDispatcher.initialize(this)
         LogFileManager.initLogFile(this)
-
-        // 初始化配置文件
-        val dir = File(this.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), "")
-        val file = File(dir.toString() + File.separator + "DailyTaskConfig.json")
-        if (!file.exists()) {
-            try {
-                file.createNewFile()
-            } catch (e: IOException) {
-                e.printStackTrace()
-            }
-        }
-        ConfigStore.init(file.absolutePath)
-        AppConfig.init()
 
         dataBase = databaseBuilder(this, DailyTaskDataBase::class.java, "DailyTask.db").build()
 

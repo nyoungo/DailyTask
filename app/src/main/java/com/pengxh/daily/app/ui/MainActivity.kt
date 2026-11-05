@@ -1,5 +1,7 @@
 package com.pengxh.daily.app.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
@@ -7,6 +9,7 @@ import android.provider.Settings
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.graphics.ColorUtils
@@ -15,7 +18,8 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.github.gzuliyujiang.wheelpicker.widget.TimeWheelLayout
+import com.google.android.material.button.MaterialButton
 import com.pengxh.daily.app.R
 import com.pengxh.daily.app.adapter.DailyTaskAdapter
 import com.pengxh.daily.app.base.KotlinBaseActivity
@@ -23,8 +27,12 @@ import com.pengxh.daily.app.databinding.ActivityMainBinding
 import com.pengxh.daily.app.events.MainEvent
 import com.pengxh.daily.app.events.MonitorEvent
 import com.pengxh.daily.app.events.TipsEvent
+import com.pengxh.daily.app.extensions.isApplicationExist
 import com.pengxh.daily.app.extensions.navigatePageTo
 import com.pengxh.daily.app.extensions.show
+import com.pengxh.daily.app.extensions.showActionSheet
+import com.pengxh.daily.app.extensions.showCustomDialog
+import com.pengxh.daily.app.extensions.toTimeEntity
 import com.pengxh.daily.app.service.FloatingWindowService
 import com.pengxh.daily.app.service.ForegroundRunningService
 import com.pengxh.daily.app.service.NotificationMonitorService
@@ -35,7 +43,6 @@ import com.pengxh.daily.app.utils.DailyTask
 import com.pengxh.daily.app.utils.GestureController
 import com.pengxh.daily.app.utils.Key
 import com.pengxh.daily.app.utils.LogFileManager
-import com.pengxh.daily.app.utils.MainDialogManager
 import com.pengxh.daily.app.utils.MaskViewController
 import com.pengxh.daily.app.utils.MessageDispatcher
 import com.pengxh.daily.app.utils.ProjectionSession
@@ -43,7 +50,8 @@ import com.pengxh.daily.app.utils.TaskListState
 import com.pengxh.daily.app.utils.TaskScheduler
 import com.pengxh.daily.app.utils.WatermarkDrawable
 import com.pengxh.daily.app.vm.MainViewModel
-import com.pengxh.daily.app.widget.TaskTimeDialog
+import com.pengxh.daily.app.widget.DeletableEditText
+import com.pengxh.daily.app.widget.SettingItemView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -53,9 +61,6 @@ import java.util.Locale
 class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
 
     private val permissionContract = ActivityResultContracts.StartActivityForResult()
-
-    private val mainViewModel: MainViewModel by viewModels()
-
     private val insetsController by lazy {
         WindowCompat.getInsetsController(window, binding.rootView)
     }
@@ -63,6 +68,8 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
     private val gestureController by lazy {
         GestureController(this, maskViewController, ::saveMaskMode)
     }
+    private val mainViewModel: MainViewModel by viewModels()
+    private val clipboard by lazy { getSystemService(ClipboardManager::class.java) }
 
     private val dailyTaskAdapter by lazy {
         DailyTaskAdapter().apply {
@@ -145,13 +152,28 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
                         return@setOnMenuItemClickListener true
                     }
 
-                    TaskTimeDialog.show(this, "添加任务") { time ->
-                        mainViewModel.addTask(time)
+                    showActionSheet(R.layout.sheet_add_task) { view, dialog ->
+                        val timePicker = view.findViewById<TimeWheelLayout>(R.id.timePicker)
+                        view.findViewById<MaterialButton>(R.id.confirmButton).setOnClickListener {
+                            val time = String.Companion.format(
+                                Locale.CHINA, "%02d:%02d:%02d",
+                                timePicker.selectedHour,
+                                timePicker.selectedMinute,
+                                timePicker.selectedSecond
+                            )
+                            mainViewModel.addTask(time)
+                            dialog.dismiss()
+                        }
                     }
                 }
 
-                R.id.menu_settings -> MainDialogManager.showUsageNotice(this) {
-                    navigatePageTo<SettingsActivity>()
+                R.id.menu_settings -> {
+                    showCustomDialog(R.layout.dialog_usage_notice, false) { view, dialog ->
+                        view.findViewById<MaterialButton>(R.id.confirmButton).setOnClickListener {
+                            dialog.dismiss()
+                            navigatePageTo<SettingsActivity>()
+                        }
+                    }
                 }
             }
             true
@@ -172,8 +194,22 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
         }
 
         binding.importTaskView.setOnClickListener {
-            MainDialogManager.showImportInput(this) { json ->
-                mainViewModel.importTasks(json)
+            showCustomDialog(R.layout.dialog_import_input) { view, dialog ->
+                val inputView = view.findViewById<DeletableEditText>(R.id.inputView)
+                view.findViewById<MaterialButton>(R.id.confirmButton).setOnClickListener {
+                    val json = inputView.text.toString()
+                    mainViewModel.importTasks(json)
+                    dialog.dismiss()
+                }
+                view.findViewById<MaterialButton>(R.id.cancelButton).setOnClickListener {
+                    dialog.dismiss()
+                }
+            }
+        }
+
+        binding.exportTaskView.setOnClickListener {
+            lifecycleScope.launch {
+                mainViewModel.exportTasks()
             }
         }
     }
@@ -287,8 +323,63 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
                     is MainEvent.ImportSuccess -> handleImportSuccess(event)
 
                     is MainEvent.ImportError -> event.message.show(this@MainActivity)
+
+                    is MainEvent.ExportSuccess -> {
+                        showActionSheet(R.layout.sheet_export_result) { view, dialog ->
+                            val content = event.json
+                            view.findViewById<SettingItemView>(R.id.qqItemView)
+                                .setOnClickListener {
+                                    shareTextTo(Constant.QQ, "QQ", content)
+                                    dialog.dismiss()
+                                }
+                            view.findViewById<SettingItemView>(R.id.wxItemView)
+                                .setOnClickListener {
+                                    shareTextTo(Constant.WECHAT, "微信", content)
+                                    dialog.dismiss()
+                                }
+                            view.findViewById<SettingItemView>(R.id.timItemView)
+                                .setOnClickListener {
+                                    shareTextTo(Constant.TIM, "TIM", content)
+                                    dialog.dismiss()
+                                }
+                            view.findViewById<SettingItemView>(R.id.alipayItemView)
+                                .setOnClickListener {
+                                    shareTextTo(Constant.ZFB, "支付宝", content)
+                                    dialog.dismiss()
+                                }
+                            view.findViewById<SettingItemView>(R.id.clipboardItemView)
+                                .setOnClickListener {
+                                    val cipData = ClipData.newPlainText("TaskConfig", content)
+                                    clipboard.setPrimaryClip(cipData)
+                                    "已复制到剪贴板".show(this@MainActivity)
+                                    dialog.dismiss()
+                                }
+                            view.findViewById<MaterialButton>(R.id.cancelButton)
+                                .setOnClickListener {
+                                dialog.dismiss()
+                            }
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    private fun shareTextTo(packageName: String, appName: String, text: String) {
+        if (!isApplicationExist(packageName)) {
+            "请先安装${appName}".show(this)
+            return
+        }
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+            setPackage(packageName)
+        }
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            "分享失败".show(this)
         }
     }
 
@@ -440,8 +531,19 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
             return
         }
         val item = dailyTaskAdapter.itemAt(position) ?: return
-        TaskTimeDialog.show(this, "修改任务时间", item.time) { time ->
-            mainViewModel.updateTaskTime(item, time)
+        showActionSheet(R.layout.sheet_edit_task) { view, dialog ->
+            val timePicker = view.findViewById<TimeWheelLayout>(R.id.timePicker)
+            timePicker.setDefaultValue(item.time.toTimeEntity())
+            view.findViewById<MaterialButton>(R.id.confirmButton).setOnClickListener {
+                val time = String.Companion.format(
+                    Locale.CHINA, "%02d:%02d:%02d",
+                    timePicker.selectedHour,
+                    timePicker.selectedMinute,
+                    timePicker.selectedSecond
+                )
+                mainViewModel.updateTaskTime(item, time)
+                dialog.dismiss()
+            }
         }
     }
 
@@ -454,12 +556,17 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
             return
         }
         val item = dailyTaskAdapter.itemAt(position) ?: return
-        MaterialAlertDialogBuilder(this)
-            .setTitle("删除任务")
-            .setMessage("确定要删除这个任务吗？")
-            .setCancelable(false) // 禁止点击外部关闭
-            .setPositiveButton("确定") { _, _ -> mainViewModel.deleteTask(item) }
-            .setNegativeButton("取消", null).show()
+        showCustomDialog(R.layout.dialog_delete_task) { view, dialog ->
+            view.findViewById<TextView>(R.id.textView).text =
+                "确定要删除 ${item.time} 的打卡任务吗？"
+            view.findViewById<MaterialButton>(R.id.confirmButton).setOnClickListener {
+                mainViewModel.deleteTask(item)
+                dialog.dismiss()
+            }
+            view.findViewById<MaterialButton>(R.id.cancelButton).setOnClickListener {
+                dialog.dismiss()
+            }
+        }
     }
 
     private fun handleImportSuccess(event: MainEvent.ImportSuccess) {
@@ -470,7 +577,12 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
         if (event.warnings.isEmpty()) {
             "任务导入成功".show(this@MainActivity)
         } else {
-            MainDialogManager.showImportResult(this@MainActivity, event.warnings)
+            showCustomDialog(R.layout.dialog_import_result) { view, dialog ->
+                view.findViewById<TextView>(R.id.textView).text = event.warnings.joinToString("\n")
+                view.findViewById<MaterialButton>(R.id.confirmButton).setOnClickListener {
+                    dialog.dismiss()
+                }
+            }
         }
     }
 

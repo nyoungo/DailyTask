@@ -1,45 +1,39 @@
 package com.pengxh.daily.app.ui
 
-import android.content.ClipboardManager
-import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
-import android.util.Log
 import android.view.View
+import android.widget.LinearLayout
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.button.MaterialButton
+import com.pengxh.daily.app.R
+import com.pengxh.daily.app.adapter.WorkdayAdapter
 import com.pengxh.daily.app.base.KotlinBaseActivity
 import com.pengxh.daily.app.databinding.ActivityTaskConfigBinding
-import com.pengxh.daily.app.extensions.isApplicationExist
 import com.pengxh.daily.app.extensions.show
-import com.pengxh.daily.app.extensions.toJson
-import com.pengxh.daily.app.model.ExportDataModel
+import com.pengxh.daily.app.extensions.showActionSheet
+import com.pengxh.daily.app.extensions.showCustomDialog
 import com.pengxh.daily.app.service.ForegroundRunningService
-import com.pengxh.daily.app.sqlite.DatabaseWrapper
-import com.pengxh.daily.app.sqlite.bean.DailyTaskBean
 import com.pengxh.daily.app.utils.AppConfig
 import com.pengxh.daily.app.utils.Constant
 import com.pengxh.daily.app.utils.CustomWorkdayManager
 import com.pengxh.daily.app.utils.FloatingWindowController
 import com.pengxh.daily.app.utils.TaskScheduler
-import kotlinx.coroutines.Dispatchers
+import com.pengxh.daily.app.widget.DeletableEditText
+import com.pengxh.daily.app.widget.SettingItemView
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.time.DayOfWeek
 
 class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
 
     private val kTag = "TaskConfigActivity"
-    private val context = this
-    private val hourArray = listOf("0", "1", "2", "3", "4", "5", "6", "自定义（单位：时）")
-    private val timeArray = listOf("15", "30", "45", "自定义（单位：秒）")
-    private val optionArray = listOf("QQ", "微信", "TIM", "支付宝", "剪切板")
-    private val clipboard by lazy { getSystemService(ClipboardManager::class.java) }
+    private val context = this@TaskConfigActivity
 
     override fun initViewBinding(): ActivityTaskConfigBinding {
         return ActivityTaskConfigBinding.inflate(layoutInflater)
@@ -65,10 +59,10 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
 
     override fun initOnCreate(savedInstanceState: Bundle?) {
         val hour = AppConfig.loadInt(Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR)
-        binding.resetTimeItem.rightTextView.text = "每天${hour}点"
+        binding.resetTimeItem.rightTextView.text = "每天 $hour 点"
 
         val time = AppConfig.loadInt(Constant.STAY_OVERTIME_KEY, Constant.DEFAULT_OVER_TIME)
-        binding.timeoutItem.rightTextView.text = "${time}s"
+        binding.timeoutItem.rightTextView.text = "$time 秒"
 
         binding.keyItem.rightTextView.text =
             AppConfig.loadString(Constant.REMOTE_COMMAND_KEY, "打卡")
@@ -89,7 +83,7 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
         if (needRandom) {
             binding.minuteRangeItem.visibility = View.VISIBLE
             val value = AppConfig.loadInt(Constant.TIME_RANGE_KEY, Constant.DEFAULT_TIME_RANGE)
-            binding.minuteRangeItem.rightTextView.text = "${value}分钟"
+            binding.minuteRangeItem.rightTextView.text = "$value 分钟"
         } else {
             binding.minuteRangeItem.visibility = View.GONE
         }
@@ -107,48 +101,107 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
 
     override fun initEvent() {
         binding.resetTimeItem.setOnClickListener {
-            // TODO: 2024/6/10 需要重写
-//            BottomActionSheet.Builder()
-//                .setContext(this)
-//                .setActionItemTitle(hourArray)
-//                .setItemTextColor(R.color.theme_color.convertColor(this))
-//                .setOnActionSheetListener(object : BottomActionSheet.OnActionSheetListener {
-//                    override fun onActionItemClick(position: Int) {
-//                        setHourByPosition(position)
-//                    }
-//                }).build().show()
+            showActionSheet(R.layout.sheet_set_reset_time) { view, dialog ->
+                val optionsLayout = view.findViewById<LinearLayout>(R.id.optionsLayout)
+                (0..6).forEach { hour ->
+                    val item = SettingItemView(this).apply {
+                        title = "每天 $hour 点"
+                        setOnClickListener {
+                            updateResetHour(hour)
+                            dialog.dismiss()
+                        }
+                    }
+                    optionsLayout.addView(item)
+                }
+
+                // 自定义入口：点开输入框
+                val customItem = SettingItemView(context).apply {
+                    title = "自定义（单位：时）"
+                    setOnClickListener {
+                        dialog.dismiss()
+                        showCustomDialog(R.layout.dialog_set_reset_time) { view, dialog ->
+                            val inputView = view.findViewById<DeletableEditText>(R.id.inputView)
+                            view.findViewById<MaterialButton>(R.id.confirmButton)
+                                .setOnClickListener {
+                                if (inputView.text.isNullOrBlank()) {
+                                    inputView.shakeIfEmpty()
+                                    "请输入重置时间".show(context)
+                                    return@setOnClickListener
+                                }
+                                updateResetHour(inputView.text.toString().toInt())
+                                dialog.dismiss()
+                            }
+                            view.findViewById<MaterialButton>(R.id.cancelButton)
+                                .setOnClickListener {
+                                dialog.dismiss()
+                            }
+                        }
+                    }
+                }
+                optionsLayout.addView(customItem)
+            }
         }
 
         binding.timeoutItem.setOnClickListener {
-            // TODO: 2024/6/10 需要重写
-//            BottomActionSheet.Builder()
-//                .setContext(this)
-//                .setActionItemTitle(timeArray)
-//                .setItemTextColor(R.color.theme_color.convertColor(this))
-//                .setOnActionSheetListener(object : BottomActionSheet.OnActionSheetListener {
-//                    override fun onActionItemClick(position: Int) {
-//                        setTimeByPosition(position)
-//                    }
-//                }).build().show()
+            showActionSheet(R.layout.sheet_set_over_time) { view, dialog ->
+                val optionsLayout = view.findViewById<LinearLayout>(R.id.optionsLayout)
+                listOf(15, 30, 45, 60).forEach { seconds ->
+                    val item = SettingItemView(this).apply {
+                        title = "$seconds 秒"
+                        setOnClickListener {
+                            updateTimeout(seconds)
+                            dialog.dismiss()
+                        }
+                    }
+                    optionsLayout.addView(item)
+                }
+
+                // 自定义入口：点开输入框
+                val customItem = SettingItemView(context).apply {
+                    title = "自定义（单位：秒）"
+                    setOnClickListener {
+                        dialog.dismiss()
+                        showCustomDialog(R.layout.dialog_set_custom_time) { view, dialog ->
+                            val inputView = view.findViewById<DeletableEditText>(R.id.inputView)
+                            view.findViewById<MaterialButton>(R.id.confirmButton)
+                                .setOnClickListener {
+                                if (inputView.text.isNullOrBlank()) {
+                                    inputView.shakeIfEmpty()
+                                    "请输入超时时间".show(context)
+                                    return@setOnClickListener
+                                }
+                                updateTimeout(inputView.text.toString().toInt())
+                                dialog.dismiss()
+                            }
+                            view.findViewById<MaterialButton>(R.id.cancelButton)
+                                .setOnClickListener {
+                                dialog.dismiss()
+                            }
+                        }
+                    }
+                }
+                optionsLayout.addView(customItem)
+            }
         }
 
         binding.keyItem.setOnClickListener {
-            // TODO: 2024/6/10 需要重写
-//            AlertInputDialog.Builder()
-//                .setContext(this)
-//                .setTitle("设置打卡口令")
-//                .setHintMessage("请输入打卡口令，如：打卡")
-//                .setNegativeButton("取消")
-//                .setPositiveButton("确定")
-//                .setOnDialogButtonClickListener(object :
-//                    AlertInputDialog.OnDialogButtonClickListener {
-//                    override fun onConfirmClick(value: String) {
-//                        AppConfig.saveString(Constant.REMOTE_COMMAND_KEY, value)
-//                        binding.keyItem.rightTextView.text = value
-//                    }
-//
-//                    override fun onCancelClick() {}
-//                }).build().show()
+            showCustomDialog(R.layout.dialog_set_remote_command) { view, dialog ->
+                val inputView = view.findViewById<DeletableEditText>(R.id.inputView)
+                inputView.setText(AppConfig.loadString(Constant.REMOTE_COMMAND_KEY, "打卡"))
+                view.findViewById<MaterialButton>(R.id.confirmButton).setOnClickListener {
+                    if (inputView.text.isNullOrBlank()) {
+                        inputView.shakeIfEmpty()
+                        "请输入打卡口令".show(context)
+                        return@setOnClickListener
+                    }
+                    AppConfig.saveString(Constant.REMOTE_COMMAND_KEY, inputView.text.toString())
+                    binding.keyItem.rightTextView.text = inputView.text.toString()
+                    dialog.dismiss()
+                }
+                view.findViewById<MaterialButton>(R.id.cancelButton).setOnClickListener {
+                    dialog.dismiss()
+                }
+            }
         }
 
         binding.workdayLayout.setOnClickListener {
@@ -156,7 +209,28 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
                 "任务进行中，无法修改工作日".show(context)
                 return@setOnClickListener
             }
-            showWorkdaySelector()
+            showActionSheet(R.layout.sheet_select_workday) { view, dialog ->
+                val selected = CustomWorkdayManager.loadWorkdays().toMutableSet()
+                val adapter = WorkdayAdapter(selected)
+                view.findViewById<RecyclerView>(R.id.recyclerView).adapter = adapter
+
+                view.findViewById<View>(R.id.confirmButton).setOnClickListener {
+                    // 二次校验：对话框打开期间任务可能被启动
+                    if (TaskScheduler.isRunning()) {
+                        "任务进行中，无法修改工作日".show(this)
+                        return@setOnClickListener
+                    }
+
+                    if (selected.isEmpty()) {
+                        "至少保留一天为工作日".show(context)
+                        return@setOnClickListener
+                    }
+                    CustomWorkdayManager.saveWorkdays(selected)
+                    updateCustomWorkdaySummary(selected)
+                    dialog.dismiss()
+                }
+                view.findViewById<View>(R.id.cancelButton).setOnClickListener { dialog.dismiss() }
+            }
         }
 
         binding.randomTimeItem.switchView.setOnCheckedChangeListener { _, isChecked ->
@@ -165,7 +239,7 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
                 binding.minuteRangeItem.visibility = View.VISIBLE
                 val value =
                     AppConfig.loadInt(Constant.TIME_RANGE_KEY, Constant.DEFAULT_TIME_RANGE)
-                binding.minuteRangeItem.rightTextView.text = "${value}分钟"
+                binding.minuteRangeItem.rightTextView.text = "$value 分钟"
             } else {
                 binding.minuteRangeItem.visibility = View.GONE
             }
@@ -176,185 +250,26 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
         }
 
         binding.minuteRangeItem.setOnClickListener {
-            // TODO: 2024/6/10 需要重写
-//            AlertInputDialog.Builder()
-//                .setContext(this)
-//                .setTitle("设置随机时间范围")
-//                .setHintMessage("请输入整数，如：30")
-//                .setNegativeButton("取消")
-//                .setPositiveButton("确定")
-//                .setOnDialogButtonClickListener(object :
-//                    AlertInputDialog.OnDialogButtonClickListener {
-//                    override fun onConfirmClick(value: String) {
-//                        if (value.isNumber()) {
-//                            updateRandomMinuteRange(value.toInt())
-//                        } else {
-//                            "直接输入整数时间即可".show(context)
-//                        }
-//                    }
-//
-//                    override fun onCancelClick() {}
-//                }).build().show()
-        }
-
-        binding.exportItem.setOnClickListener {
-            val exportData = ExportDataModel()
-
-            // Int
-            exportData.resetTime =
-                AppConfig.loadInt(Constant.RESET_TIME_KEY, Constant.DEFAULT_RESET_HOUR)
-            exportData.overtime =
-                AppConfig.loadInt(Constant.STAY_OVERTIME_KEY, Constant.DEFAULT_OVER_TIME)
-            exportData.timeRange =
-                AppConfig.loadInt(Constant.TIME_RANGE_KEY, Constant.DEFAULT_TIME_RANGE)
-            exportData.msgChannel = AppConfig.loadInt(
-                Constant.MSG_CHANNEL_KEY, Constant.DEFAULT_INDEX
-            ).takeIf { it in 0..1 }
-            exportData.targetApp = AppConfig.loadInt(Constant.TARGET_APP_KEY, 0)
-            exportData.resultSource = AppConfig.loadInt(
-                Constant.RESULT_SOURCE_KEY, Constant.DEFAULT_INDEX
-            ).takeIf { it in 0..1 }
-
-            // String
-            exportData.remoteCommand = AppConfig.loadString(Constant.REMOTE_COMMAND_KEY, "打卡")
-            exportData.msgTitle =
-                AppConfig.loadString(Constant.MESSAGE_TITLE_KEY, "打卡结果通知")
-            exportData.wxKey = AppConfig.loadString(Constant.WX_WEB_HOOK_KEY, "")
-            exportData.customWorkdays = CustomWorkdayManager.serializeWorkdays(
-                CustomWorkdayManager.loadWorkdays()
-            )
-
-            // Boolean
-            exportData.isDetectGesture =
-                AppConfig.loadBoolean(Constant.GESTURE_DETECTOR_KEY, true)
-            exportData.isBackToHome = AppConfig.loadBoolean(Constant.BACK_TO_HOME_KEY, false)
-            exportData.isAutoRecycle =
-                AppConfig.loadBoolean(Constant.TASK_AUTO_RECYCLE_KEY, true)
-            exportData.isRandomTime = AppConfig.loadBoolean(Constant.RANDOM_TIME_KEY, true)
-            exportData.isSkipHoliday = AppConfig.loadBoolean(Constant.SKIP_HOLIDAY_KEY, true)
-            exportData.isSavePower =
-                AppConfig.loadBoolean(Constant.POWER_SAVE_MODE_KEY, false)
-
-            // EmailConfig
-            val obj = AppConfig.loadJson(Constant.EMAIL_CONFIG_KEY)
-            if (!obj.isEmpty) {
-                val outbox = obj.get("outbox").asString
-                val authCode = obj.get("authCode").asString
-                val inbox = obj.get("inbox").asString
-                exportData.emailConfig = Triple(outbox, authCode, inbox)
-            }
-
-            // TaskBeans
-            lifecycleScope.launch {
-                val taskBeans = withContext(Dispatchers.IO) {
-                    DatabaseWrapper.loadAllTask()
+            showCustomDialog(R.layout.dialog_set_time_range) { view, dialog ->
+                val inputView = view.findViewById<DeletableEditText>(R.id.inputView)
+                view.findViewById<MaterialButton>(R.id.confirmButton).setOnClickListener {
+                    if (inputView.text.isNullOrBlank()) {
+                        inputView.shakeIfEmpty()
+                        "请输入随机时间".show(context)
+                        return@setOnClickListener
+                    }
+                    updateRandomMinuteRange(inputView.text.toString().toInt())
+                    dialog.dismiss()
                 }
-                if (taskBeans.isNotEmpty()) {
-                    exportData.tasks = taskBeans
-                } else {
-                    exportData.tasks = ArrayList<DailyTaskBean>()
+                view.findViewById<MaterialButton>(R.id.cancelButton).setOnClickListener {
+                    dialog.dismiss()
                 }
-
-                val json = exportData.toJson()
-                Log.d(kTag, json)
-
-                // TODO: 2024/6/10 需要重写
-//                BottomActionSheet.Builder()
-//                    .setContext(this@TaskConfigActivity)
-//                    .setActionItemTitle(optionArray)
-//                    .setItemTextColor(R.color.theme_color.convertColor(this@TaskConfigActivity))
-//                    .setOnActionSheetListener(object : BottomActionSheet.OnActionSheetListener {
-//                        override fun onActionItemClick(position: Int) {
-//                            when (position) {
-//                                0 -> shareTextTo(Constant.QQ, "QQ", json)
-//                                1 -> shareTextTo(Constant.WECHAT, "微信", json)
-//                                2 -> shareTextTo(Constant.TIM, "TIM", json)
-//                                3 -> shareTextTo(Constant.ZFB, "支付宝", json)
-//                                4 -> {
-//                                    val cipData = ClipData.newPlainText("TaskConfig", json)
-//                                    clipboard.setPrimaryClip(cipData)
-//                                    "已复制到剪切板".show(context)
-//                                }
-//                            }
-//                        }
-//                    }).build().show()
             }
         }
-    }
-
-    private fun showWorkdaySelector() {
-        val orderedDays = CustomWorkdayManager.getOrderedDays()
-        val selectedDays = CustomWorkdayManager.loadWorkdays().toMutableSet()
-        val labels = orderedDays.map { CustomWorkdayManager.getDayLabel(it) }.toTypedArray()
-        val checkedItems = orderedDays.map { it in selectedDays }.toBooleanArray()
-
-        MaterialAlertDialogBuilder(this)
-            .setTitle("选择工作日")
-            .setMultiChoiceItems(labels, checkedItems) { _, which, isChecked ->
-                val day = orderedDays[which]
-                if (isChecked) {
-                    selectedDays.add(day)
-                } else {
-                    selectedDays.remove(day)
-                }
-            }
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确定") { _, _ ->
-                // 二次校验：对话框打开期间任务可能被启动
-                if (TaskScheduler.isRunning()) {
-                    "任务进行中，无法修改工作日".show(this)
-                    return@setPositiveButton
-                }
-
-                if (selectedDays.isEmpty()) {
-                    "至少保留一天为工作日".show(this)
-                    return@setPositiveButton
-                }
-
-                val normalized = orderedDays.filter { it in selectedDays }.toSet()
-                CustomWorkdayManager.saveWorkdays(normalized)
-                updateCustomWorkdaySummary(normalized)
-            }
-            .show()
     }
 
     private fun updateCustomWorkdaySummary(workdays: Set<DayOfWeek>) {
         binding.workdayValueView.text = CustomWorkdayManager.formatWorkdays(workdays)
-    }
-
-    private fun setHourByPosition(position: Int) {
-        if (position == hourArray.size - 1) {
-            // TODO: 2024/6/10 需要重写
-//            AlertInputDialog.Builder()
-//                .setContext(this)
-//                .setTitle("设置重置时间")
-//                .setHintMessage("直接输入整数时间即可，如：6")
-//                .setNegativeButton("取消")
-//                .setPositiveButton("确定")
-//                .setOnDialogButtonClickListener(object :
-//                    AlertInputDialog.OnDialogButtonClickListener {
-//                    override fun onConfirmClick(value: String) {
-//                        if (value.isNumber()) {
-//                            updateResetHour(value.toInt())
-//                        } else {
-//                            "直接输入整数时间即可".show(context)
-//                        }
-//                    }
-//
-//                    override fun onCancelClick() {}
-//                }).build().show()
-        } else {
-            updateResetHour(hourArray[position].toInt())
-        }
-    }
-
-    private fun updateResetHour(hour: Int) {
-        if (hour !in 0..23) {
-            "重置时间必须在0到23点之间".show(this)
-            return
-        }
-        binding.resetTimeItem.rightTextView.text = "每天${hour}点"
-        setTaskResetTime(hour)
     }
 
     private fun setTaskResetTime(hour: Int) {
@@ -363,30 +278,13 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
         ForegroundRunningService.emitResetTaskTime()
     }
 
-    private fun setTimeByPosition(position: Int) {
-        if (position == timeArray.size - 1) {
-            // TODO: 2024/6/10 需要重写
-//            AlertInputDialog.Builder()
-//                .setContext(this)
-//                .setTitle("设置超时时间")
-//                .setHintMessage("直接输入整数时间即可，如：60")
-//                .setNegativeButton("取消")
-//                .setPositiveButton("确定")
-//                .setOnDialogButtonClickListener(object :
-//                    AlertInputDialog.OnDialogButtonClickListener {
-//                    override fun onConfirmClick(value: String) {
-//                        if (value.isNumber()) {
-//                            updateTimeout(value.toInt())
-//                        } else {
-//                            "直接输入整数时间即可".show(context)
-//                        }
-//                    }
-//
-//                    override fun onCancelClick() {}
-//                }).build().show()
-        } else {
-            updateTimeout(timeArray[position].toInt())
+    private fun updateResetHour(hour: Int) {
+        if (hour !in 0..23) {
+            "重置时间必须在0到23点之间".show(this)
+            return
         }
+        binding.resetTimeItem.rightTextView.text = "每天 $hour 点"
+        setTaskResetTime(hour)
     }
 
     private fun updateTimeout(time: Int) {
@@ -394,35 +292,17 @@ class TaskConfigActivity : KotlinBaseActivity<ActivityTaskConfigBinding>() {
             "超时时间必须大于0秒".show(this)
             return
         }
-        binding.timeoutItem.rightTextView.text = "${time}s"
+        binding.timeoutItem.rightTextView.text = "$time 秒"
         AppConfig.saveInt(Constant.STAY_OVERTIME_KEY, time)
         FloatingWindowController.setOvertime(time)
     }
 
-    private fun shareTextTo(packageName: String, appName: String, text: String) {
-        if (!isApplicationExist(packageName)) {
-            "请先安装${appName}".show(this)
-            return
-        }
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, text)
-            setPackage(packageName)
-        }
-        try {
-            startActivity(intent)
-        } catch (e: Exception) {
-            e.printStackTrace()
-            "分享失败".show(this)
-        }
-    }
-
     private fun updateRandomMinuteRange(value: Int) {
         if (value < 0) {
-            "随机时间范围不能小于0分钟".show(this)
+            "随机时间不能小于0分钟".show(this)
             return
         }
-        binding.minuteRangeItem.rightTextView.text = "${value}分钟"
+        binding.minuteRangeItem.rightTextView.text = "$value 分钟"
         AppConfig.saveInt(Constant.TIME_RANGE_KEY, value)
     }
 }
