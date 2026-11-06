@@ -14,7 +14,6 @@
     screen: 'main',
     history: [],
     running: true,
-    mask: false,
     tasks: [
       { id: 1, time: '08:30:00', window: '08:20 – 08:40', state: 'done', actual: '08:29:47' },
       { id: 2, time: '12:30:00', window: '12:20 – 12:40', state: 'running', actual: '' },
@@ -41,27 +40,19 @@
     return !!(state.channelReady && state.channelReady[ch]);
   }
 
-  /* 当前生效渠道的选中态、警告条与设置页取值一起刷新 */
+  /* 当前生效渠道的选中态、禁用态、磁贴状态点与设置页取值一起刷新 */
   function renderChannel() {
-    $$('#channelPicker .ch-card').forEach(function (card) {
-      const ch = card.dataset.channel;
+    $$('#channelPicker .ch-tile').forEach(function (tile) {
+      const ch = tile.dataset.channel;
       const active = state.msgChannel === ch;
-      card.classList.toggle('is-active', active);
-      card.setAttribute('aria-pressed', active ? 'true' : 'false');
-    });
+      tile.classList.toggle('is-active', active);
+      tile.setAttribute('aria-checked', active ? 'true' : 'false');
 
-    // 当前渠道还没配好时明确提示，避免"以为已经能用"
-    const warn = $('#channelWarn');
-    const cur = state.msgChannel;
-    const anyReady = channelReady('wx') || channelReady('mail');
-    if (cur && channelReady(cur)) {
-      warn.hidden = true;
-    } else {
-      warn.hidden = false;
-      warn.textContent = anyReady
-        ? '当前渠道「' + CHANNELS[cur].label + '」尚未配置，消息将无法送达'
-        : '尚未配置任何渠道，消息将无法送达';
-    }
+      // 未配置的渠道整块禁用，不可选中（配置状态见下方各组）
+      const ready = channelReady(ch);
+      tile.classList.toggle('is-disabled', !ready);
+      tile.setAttribute('aria-disabled', ready ? 'false' : 'true');
+    });
 
     // 设置页同步显示当前生效渠道
     const val = $('#msgChannelValue');
@@ -177,16 +168,10 @@
     if (!noHistory) state.history.push(state.screen);
     state.screen = screen;
 
-    // 总览模式下选择某个页面 → 自动回到单页浏览
-    exitOverview();
-
     $$('.screen').forEach(function (s) {
       s.classList.toggle('is-active', s.dataset.screen === screen);
     });
     $$('.nav-item').forEach(function (b) {
-      b.classList.toggle('is-active', b.dataset.goto === screen);
-    });
-    $$('.proto-switch button').forEach(function (b) {
       b.classList.toggle('is-active', b.dataset.goto === screen);
     });
 
@@ -199,15 +184,6 @@
   function back() {
     const prev = state.history.pop() || 'main';
     goto(prev, true);
-  }
-
-  function exitOverview() {
-    const stage = $('.stage');
-    if (!stage.classList.contains('is-overview')) return;
-    stage.classList.remove('is-overview');
-    const btn = $('#overviewBtn');
-    btn.classList.remove('is-on');
-    btn.textContent = '总览';
   }
 
   /* ---------------------------------------------------------
@@ -443,13 +419,41 @@
     openSheet('#sheetList');
   }
 
+  /* 对话框顶部语义图标（与弹窗组件原型 dialogs.html 同风格） */
+  const DIALOG_ICONS = {
+    info: '<svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm1 15h-2v-6h2zm0-8h-2V7h2z" fill="currentColor"/></svg>',
+    warn: '<svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm1 15h-2v-6h2zm0-8h-2V7h2z" fill="currentColor"/></svg>',
+    danger: '<svg viewBox="0 0 24 24" width="22" height="22"><path d="M9 3l-1.8 2H4a2 2 0 00-2 2v13a2 2 0 002 2h16a2 2 0 002-2V7a2 2 0 00-2-2h-3.2L15 3zm1.5 6.6l1.4 1.4L13.4 12l1.5 1-1.4 1.4L12 12.9l-1.4 1.4-1.4-1.4 1.5-1.1-1.5-1.1 1.4-1.4 1.4 1.5z" fill="currentColor"/></svg>'
+  };
+
   function openDialog(opt) {
+    // 顶部语义图标：info / warn / danger，缺省不显示
+    const icon = $('#dialogIcon');
+    if (opt.icon && DIALOG_ICONS[opt.icon]) {
+      icon.hidden = false;
+      icon.className = 'dialog-icon' + (opt.icon === 'info' ? '' : ' is-' + opt.icon);
+      icon.innerHTML = DIALOG_ICONS[opt.icon];
+    } else {
+      icon.hidden = true;
+      icon.innerHTML = '';
+    }
+
     $('#dialogTitle').textContent = opt.title || '提示';
-    $('#dialogMsg').textContent = opt.msg || '';
-    $('#dialogMsg').style.textAlign = 'center';
+    // 内容为代码内写死的文案，用 innerHTML 以支持 <b> 强调（与弹窗组件原型一致）
+    $('#dialogMsg').innerHTML = opt.msg || '';
+
+    // 单按钮（无取消）竖排通栏；危险确认用红色实底
+    $('#dialogActions').classList.toggle('btn-column', !!opt.hideCancel);
+    $('#dialogOk').className = 'btn ' + (opt.danger ? 'btn-danger' : 'btn-primary');
+
     $('#dialogOk').textContent = opt.okText || '确定';
     $('#dialogCancel').textContent = opt.cancelText || '取消';
     $('#dialogCancel').style.display = opt.hideCancel ? 'none' : '';
+
+    const tip = $('#dialogTip');
+    if (opt.tip) { tip.hidden = false; tip.textContent = opt.tip; }
+    else { tip.hidden = true; }
+
     $('#dialogMask').hidden = false;
     $('#dialogOk').onclick = function () {
       $('#dialogMask').hidden = true;
@@ -464,26 +468,25 @@
   function openInputDialog(title, hint, value, onOk) {
     openDialog({
       title: title,
+      msg: '',
       onOk: function () {
         const input = $('#dialogInput');
         onOk(input ? input.value.trim() : '');
-      },
-      onCancel: function () {
-        const msg = $('#dialogMsg');
-        msg.textContent = '';
-        msg.style.textAlign = 'center';
       }
     });
 
+    // 输入框以 dialog-field 结构嵌入，样式与弹窗组件原型一致
     const msg = $('#dialogMsg');
     msg.textContent = '';
-    msg.style.textAlign = 'left';
+    const field = document.createElement('div');
+    field.className = 'dialog-field';
     const input = document.createElement('input');
     input.className = 'input';
     input.id = 'dialogInput';
     input.value = value || '';
     input.placeholder = hint || '';
-    msg.appendChild(input);
+    field.appendChild(input);
+    msg.appendChild(field);
     setTimeout(function () { input.focus(); }, 120);
   }
 
@@ -638,7 +641,10 @@
         const id = parseInt(card.dataset.id, 10);
         openDialog({
           title: '删除任务',
-          msg: '确定要删除这个任务吗？',
+          msg: '确定要删除这个任务吗？删除后当天将不再自动执行该时间点。',
+          icon: 'danger',
+          danger: true,
+          okText: '删除',
           onOk: function () {
             state.tasks = state.tasks.filter(function (t) { return t.id !== id; });
             renderTasks();
@@ -662,15 +668,18 @@
 
     // 消息渠道页：选择当前生效渠道（真机侧写入 MSG_CHANNEL_KEY）
     $('#channelPicker').addEventListener('click', function (e) {
-      const card = e.target.closest('.ch-card');
-      if (!card) return;
-      const ch = card.dataset.channel;
+      const tile = e.target.closest('.ch-tile');
+      if (!tile) return;
+      const ch = tile.dataset.channel;
       if (ch === state.msgChannel) return;
+      // 未配置的渠道不可选中，只提示去完成配置
+      if (!channelReady(ch)) {
+        toast('「' + CHANNELS[ch].label + '」尚未配置，请先完成下方配置');
+        return;
+      }
       state.msgChannel = ch;
       renderChannel();
-      toast(channelReady(ch)
-        ? '消息回推渠道已切换为「' + CHANNELS[ch].label + '」'
-        : '已切换为「' + CHANNELS[ch].label + '」，但该渠道尚未配置');
+      toast('消息回推渠道已切换为「' + CHANNELS[ch].label + '」');
     });
 
     // 指令复制
@@ -820,34 +829,17 @@
       }
     });
 
-    // 伪灭屏（评审辅助入口在左侧栏）
-    $('#maskToggle').addEventListener('click', function () {
-      state.mask = !state.mask;
-      $('#maskOverlay').hidden = !state.mask;
-      this.classList.toggle('is-on', state.mask);
-    });
-    $('#maskOverlay').addEventListener('click', function () {
-      state.mask = false;
-      $('#maskOverlay').hidden = true;
-      $('#maskToggle').classList.remove('is-on');
-    });
-
     // 进入设置前先看使用须知（对齐原 App 行为）
     $('#settingsBtn').addEventListener('click', function () {
       openDialog({
         title: '使用须知',
-        msg: '本软件完全免费！仅供内部使用！严禁商用或者用作其他非法用途！\n近期发现有人在闲鱼私自倒卖本软件，请勿购买！如有购买，请联系卖家退款！',
+        msg: '本软件完全免费！仅供内部使用！<b>严禁商用或者用作其他非法用途！</b>\n近期发现有人在闲鱼私自倒卖本软件，请勿购买！如有购买，请联系卖家退款！',
+        icon: 'warn',
         okText: '知道了',
         hideCancel: true,
+        tip: '关闭后可在「设置」中随时查看',
         onOk: function () { goto('settings'); }
       });
-    });
-
-    // 总览模式：6 个页面并排，一屏看全
-    $('#overviewBtn').addEventListener('click', function () {
-      const on = $('.stage').classList.toggle('is-overview');
-      this.classList.toggle('is-on', on);
-      this.textContent = on ? '返回单页' : '总览';
     });
 
     // 深 / 浅色切换
@@ -873,12 +865,11 @@
       if (h && $('.screen[data-screen="' + h + '"]') && h !== state.screen) goto(h, true);
     });
 
-    // 快捷键：1~6 直接跳页，← 返回，G 总览
+    // 快捷键：1~6 直接跳页，← 返回
     window.addEventListener('keydown', function (e) {
       const keys = { '1': 'main', '2': 'settings', '3': 'taskconfig', '4': 'channel', '5': 'command', '6': 'qa' };
       if (keys[e.key]) goto(keys[e.key]);
       else if (e.key === 'ArrowLeft' && state.screen !== 'main') back();
-      else if (e.key === 'g' || e.key === 'G') $('#overviewBtn').click();
     });
 
     // 出错时给出可见提示，避免"点了没反应"无从排查
@@ -936,7 +927,14 @@
     if (hash && $('.screen[data-screen="' + hash + '"]')) goto(hash, true);
     if (hash === 'sheet-time') openTimeSheet('add', null);
     if (hash === 'sheet-workday') { renderWorkday(); openSheet('#sheetWorkday'); }
-    if (hash === 'dialog') openDialog({ title: '使用须知', msg: '本软件完全免费！仅供内部使用！\n严禁商用或者用作其他非法用途！', okText: '知道了', hideCancel: true });
+    if (hash === 'dialog') openDialog({
+      title: '使用须知',
+      msg: '本软件完全免费！仅供内部使用！\n严禁商用或者用作其他非法用途！',
+      icon: 'warn',
+      okText: '知道了',
+      hideCancel: true,
+      tip: '关闭后可在「设置」中随时查看'
+    });
   }
 
   document.addEventListener('DOMContentLoaded', init);
