@@ -2,22 +2,21 @@ package com.pengxh.daily.app.ui
 
 import android.graphics.Color
 import android.os.Bundle
-import android.view.View
+import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.google.gson.JsonObject
+import com.google.android.material.button.MaterialButton
 import com.pengxh.daily.app.R
 import com.pengxh.daily.app.base.KotlinBaseActivity
 import com.pengxh.daily.app.databinding.ActivityMessageChannelBinding
 import com.pengxh.daily.app.extensions.isEmail
 import com.pengxh.daily.app.extensions.show
+import com.pengxh.daily.app.extensions.showCustomDialog
 import com.pengxh.daily.app.utils.AppConfig
 import com.pengxh.daily.app.utils.Constant
-import com.pengxh.daily.app.utils.EmailManager
 import com.pengxh.daily.app.utils.MessageDispatcher
 import com.pengxh.daily.app.widget.LoadingDialog
 import java.text.SimpleDateFormat
@@ -25,8 +24,6 @@ import java.util.Date
 import java.util.Locale
 
 class MessageChannelActivity : KotlinBaseActivity<ActivityMessageChannelBinding>() {
-
-    private val context = this
 
     override fun initViewBinding(): ActivityMessageChannelBinding {
         return ActivityMessageChannelBinding.inflate(layoutInflater)
@@ -65,15 +62,31 @@ class MessageChannelActivity : KotlinBaseActivity<ActivityMessageChannelBinding>
             binding.emailInboxView.setText(inbox)
         }
 
-        // 恢复上次选择的渠道：0-邮件，1-企业微信，未设置过则默认企业微信
-        if (AppConfig.loadInt(Constant.MSG_CHANNEL_KEY, Constant.DEFAULT_INDEX) == 0) {
-            binding.channelRadioGroup.check(R.id.qqRadioButton)
+        // 恢复上次选择的渠道：0-企业微信，1-邮件
+        when (AppConfig.loadInt(Constant.MSG_CHANNEL_KEY, Constant.DEFAULT_INDEX)) {
+            0 -> if (AppConfig.loadString(Constant.WX_WEB_HOOK_KEY, "").isNotBlank()) {
+                binding.channelRadioGroup.check(R.id.wxRadioButton)
+            }
+
+            1 -> if (!AppConfig.loadJson(Constant.EMAIL_CONFIG_KEY).isEmpty) {
+                binding.channelRadioGroup.check(R.id.qqRadioButton)
+            }
         }
 
         refreshChannelState()
     }
 
     private fun refreshChannelState() {
+        // 统一刷新渠道状态，避免重复代码
+        fun pillBackgroundColor(configured: Boolean): Int {
+            return if (configured) {
+                // 成功色 12% 透明度软背景
+                ColorUtils.setAlphaComponent(getColor(R.color.success_color), 0x1F)
+            } else {
+                getColor(R.color.back_ground_color)
+            }
+        }
+
         val wxSaved = AppConfig.loadString(Constant.WX_WEB_HOOK_KEY, "").isNotBlank()
         binding.stateTextView.text = if (wxSaved) "已配置" else "未配置"
         binding.stateTextView.setTextColor(getColor(if (wxSaved) R.color.success_color else R.color.text_secondary_color))
@@ -95,25 +108,33 @@ class MessageChannelActivity : KotlinBaseActivity<ActivityMessageChannelBinding>
         }
     }
 
-    private fun pillBackgroundColor(configured: Boolean): Int {
-        return if (configured) {
-            // 成功色 12% 透明度软背景
-            ColorUtils.setAlphaComponent(getColor(R.color.success_color), 0x1F)
-        } else {
-            getColor(R.color.back_ground_color)
-        }
-    }
-
     override fun observeRequestState() {
 
     }
 
     override fun initEvent() {
-        binding.channelRadioGroup.setOnCheckedChangeListener { _, checkedId ->
-            if (checkedId == R.id.wxRadioButton) {
+        var previousCheckedId = binding.channelRadioGroup.checkedRadioButtonId
+        binding.channelRadioGroup.setOnCheckedChangeListener { group, checkedId ->
+            val configured = when (checkedId) {
+                R.id.wxRadioButton -> {
+                    AppConfig.loadString(Constant.WX_WEB_HOOK_KEY, "").isNotBlank()
+                }
 
+                R.id.qqRadioButton -> {
+                    !AppConfig.loadJson(Constant.EMAIL_CONFIG_KEY).isEmpty
+                }
+
+                else -> return@setOnCheckedChangeListener
+            }
+
+            if (!configured) {
+                group.check(previousCheckedId)
+                "请先测试并保存该渠道配置".show(this)
             } else {
-
+                previousCheckedId = checkedId
+                AppConfig.saveInt(
+                    Constant.MSG_CHANNEL_KEY, if (checkedId == R.id.wxRadioButton) 0 else 1
+                )
             }
         }
 
@@ -125,139 +146,131 @@ class MessageChannelActivity : KotlinBaseActivity<ActivityMessageChannelBinding>
                 return@setOnClickListener
             }
 
-            MaterialAlertDialogBuilder(this)
-                .setTitle("测试消息")
-                .setMessage("先发送测试消息验证 Webhook，验证成功后才会保存配置。\n\n是否继续？")
-                .setCancelable(false)
-                .setPositiveButton("继续") { _, _ ->
+            showCustomDialog(R.layout.dialog_send_message, false) { view, dialog ->
+                view.findViewById<TextView>(R.id.keyView).text = key
+
+                view.findViewById<MaterialButton>(R.id.confirmButton).setOnClickListener {
+                    dialog.dismiss()
                     sendTestMessage(key)
-                }.setNegativeButton("取消", null).show()
-//            showCustomDialog(R.layout.dialog_send_message) { view, dialog ->
-//
-//            }
+                }
+
+                view.findViewById<MaterialButton>(R.id.cancelButton).setOnClickListener {
+                    dialog.dismiss()
+                }
+            }
         }
 
         binding.sendEmailButton.setOnClickListener {
             val address = binding.emailSendAddressView.text.toString()
             if (address.isBlank()) {
                 binding.emailSendAddressView.shakeIfEmpty()
-                "发件箱地址为空".show(context)
+                "发件箱地址为空".show(this)
                 return@setOnClickListener
             }
+
             val outbox = if (address.contains("@qq.com")) {
                 address
             } else {
                 "${address}@qq.com"
             }
             if (!outbox.isEmail()) {
-                "发件箱格式错误，请检查".show(context)
+                "发件箱格式错误，请检查".show(this)
                 return@setOnClickListener
             }
 
             val authCode = binding.emailSendCodeView.text.toString()
             if (authCode.isBlank()) {
                 binding.emailSendCodeView.shakeIfEmpty()
-                "发件箱授权码为空".show(context)
+                "发件箱授权码为空".show(this)
                 return@setOnClickListener
             }
 
             val inbox = binding.emailInboxView.text.toString()
             if (inbox.isBlank()) {
                 binding.emailInboxView.shakeIfEmpty()
-                "收件箱地址为空".show(context)
+                "收件箱地址为空".show(this)
                 return@setOnClickListener
             }
+
             if (!inbox.isEmail()) {
-                "发件箱格式错误，请检查".show(context)
+                "发件箱格式错误，请检查".show(this)
                 return@setOnClickListener
             }
 
-            val cacheObj = JsonObject().apply {
-                addProperty("outbox", outbox)
-                addProperty("authCode", binding.emailSendCodeView.text.toString())
-                addProperty("inbox", binding.emailInboxView.text.toString())
-            }
+            showCustomDialog(R.layout.dialog_send_email, false) { view, dialog ->
+                view.findViewById<TextView>(R.id.outboxView).text = outbox
+                view.findViewById<TextView>(R.id.inboxView).text = inbox
 
-            sendTestEmail(cacheObj)
+                view.findViewById<MaterialButton>(R.id.confirmButton).setOnClickListener {
+                    dialog.dismiss()
+                    sendTestEmail(outbox, authCode, inbox)
+                }
+
+                view.findViewById<MaterialButton>(R.id.cancelButton).setOnClickListener {
+                    dialog.dismiss()
+                }
+            }
         }
     }
 
     private fun sendTestMessage(webhookKey: String) {
-        val message = buildString {
-            appendLine("你好！")
-            append("这是来自 DailyTask 的测试消息 🎉")
-        }
         LoadingDialog.show(this, "消息发送中，请稍后...")
-        MessageDispatcher.sendMessage(
-            "测试消息", message,
-            channelOverride = 1,
-            webhookKeyOverride = webhookKey,
+        MessageDispatcher.sendTestMessage(
+            "消息测试", "你好！这是一条来自 DailyTask 的回推渠道测试消息。",
+            webhookKey,
             onSuccess = {
-                if (isFinishing || isDestroyed) return@sendMessage
+                if (isFinishing || isDestroyed) return@sendTestMessage
                 LoadingDialog.dismiss()
 
-                AppConfig.saveWebhookAndChannel(webhookKey, 1)
-
                 AppConfig.saveString(
-                    Constant.MESSAGE_TITLE_KEY, binding.messageTitleView.text.toString().trim()
+                    Constant.MESSAGE_TITLE_KEY,
+                    binding.messageTitleView.text.toString().trim()
                 )
+                AppConfig.saveString(Constant.WX_WEB_HOOK_KEY, webhookKey)
                 AppConfig.saveString(
                     Constant.WX_CONFIG_SAVE_TIME_KEY,
                     SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(Date())
                 )
                 refreshChannelState()
-                "企业微信配置验证并保存成功".show(context)
+                "企业微信配置验证并保存成功".show(this)
             },
             onFailure = {
-                if (isFinishing || isDestroyed) return@sendMessage
+                if (isFinishing || isDestroyed) return@sendTestMessage
                 LoadingDialog.dismiss()
                 it.show(this)
             })
     }
 
-    private fun sendTestEmail(config: JsonObject) {
-        val emailConfig = EmailManager.EmailConfig(
-            config.get("outbox").asString,
-            config.get("authCode").asString,
-            config.get("inbox").asString
-        )
-        MaterialAlertDialogBuilder(this)
-            .setTitle("测试邮件")
-            .setMessage("QQ邮箱配置完成，可以发送QQ邮件。\n\n是否继续？")
-            .setCancelable(false)
-            .setPositiveButton("继续") { _, _ ->
-                LoadingDialog.show(context, "邮件发送中，请稍后....")
-                MessageDispatcher.sendMessage(
-                    "邮箱测试", "这是一封测试邮件，不必关注",
-                    channelOverride = 0,
-                    emailConfigOverride = emailConfig,
-                    onSuccess = {
-                        LoadingDialog.dismiss()
-                        "发送成功，请注意查收".show(context)
+    private fun sendTestEmail(outbox: String, authCode: String, inbox: String) {
+        LoadingDialog.show(this, "邮件发送中，请稍后....")
+        MessageDispatcher.sendTestEmail(
+            "邮箱测试", "你好！这是一封来自 DailyTask 的回推渠道测试邮件", outbox, authCode, inbox,
+            onSuccess = {
+                if (isFinishing || isDestroyed) return@sendTestEmail
+                LoadingDialog.dismiss()
 
-                        // 仅在测试发送成功后才持久化邮箱配置，与企微侧语义对齐（关联 BUG-019 / DT4-002）
-                        AppConfig.saveJson(Constant.EMAIL_CONFIG_KEY, config)
+                val config = AppConfig.loadJson(Constant.EMAIL_CONFIG_KEY).apply {
+                    addProperty("outbox", outbox)
+                    addProperty("authCode", authCode)
+                    addProperty("inbox", inbox)
+                }
 
-                        AppConfig.saveString(
-                            Constant.MESSAGE_TITLE_KEY,
-                            binding.messageTitleView.text.toString().trim()
-                        )
-
-                        AppConfig.saveInt(Constant.MSG_CHANNEL_KEY, 0)
-
-                        AppConfig.saveString(
-                            Constant.EMAIL_CONFIG_SAVE_TIME_KEY,
-                            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(Date())
-                        )
-                        refreshChannelState()
-                    },
-                    onFailure = {
-                        LoadingDialog.dismiss()
-                        "发送失败：${it}".show(context)
-                    })
-            }.setNegativeButton("取消", null).show()
-//        showCustomDialog(R.layout.dialog_send_message) { view, dialog ->
-//
-//        }
+                AppConfig.saveString(
+                    Constant.MESSAGE_TITLE_KEY,
+                    binding.messageTitleView.text.toString().trim()
+                )
+                AppConfig.saveJson(Constant.EMAIL_CONFIG_KEY, config)
+                AppConfig.saveString(
+                    Constant.EMAIL_CONFIG_SAVE_TIME_KEY,
+                    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(Date())
+                )
+                refreshChannelState()
+                "邮箱配置验证并保存成功".show(this)
+            },
+            onFailure = {
+                if (isFinishing || isDestroyed) return@sendTestEmail
+                LoadingDialog.dismiss()
+                it.show(this)
+            })
     }
 }

@@ -1,6 +1,5 @@
 package com.pengxh.daily.app.retrofit
 
-import com.pengxh.daily.app.utils.AppConfig
 import com.pengxh.daily.app.utils.Constant
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -14,7 +13,7 @@ object RetrofitServiceManager {
         RetrofitFactory.createRetrofit<RetrofitService>(Constant.WX_WEB_HOOK_URL)
     }
 
-    suspend fun sendMessage(content: String, webhookKeyOverride: String? = null): String {
+    suspend fun sendMessage(content: String, key: String): String {
         val jsonBody = JSONObject().apply {
             put("msgtype", "text")
             put("text", JSONObject().apply {
@@ -26,21 +25,11 @@ object RetrofitServiceManager {
             .toRequestBody("application/json; charset=utf-8".toMediaType())
 
         val keyMap = HashMap<String, String>()
-        keyMap["key"] = webhookKeyOverride ?: AppConfig.loadString(Constant.WX_WEB_HOOK_KEY, "")
+        keyMap["key"] = key
         return api.sendMessage(requestBody, keyMap).string()
     }
 
-    suspend fun sendImageMessage(imagePath: String): String {
-        val file = File(imagePath)
-        // 微信群机器人图片消息限制 2MB
-        val maxBytes = 2 * 1024 * 1024L
-        if (!file.exists()) {
-            return sendMessage("截图发送失败：图片文件不存在")
-        }
-        if (file.length() > maxBytes) {
-            return sendMessage("截图发送失败：图片超过2MB限制（当前 ${file.length() / 1024}KB），请截图后手动查看")
-        }
-
+    suspend fun sendImageMessage(file: File, key: String): String {
         val imageBytes = file.readBytes()
 
         // 计算 Base64
@@ -62,7 +51,7 @@ object RetrofitServiceManager {
             .toRequestBody("application/json; charset=utf-8".toMediaType())
 
         val keyMap = HashMap<String, String>()
-        keyMap["key"] = AppConfig.loadString(Constant.WX_WEB_HOOK_KEY, "")
+        keyMap["key"] = key
         return api.sendMessage(requestBody, keyMap).string()
     }
 }
