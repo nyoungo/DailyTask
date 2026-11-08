@@ -224,15 +224,11 @@ class NotificationMonitorService : NotificationListenerService() {
             }
 
             command.contains("息屏") -> {
-                AppConfig.saveInt(Constant.REMOTE_MASK_MODE_KEY, 1)
                 emitMonitorEvent(MonitorEvent.ShowMaskCommand)
-                sendCommandReceipt("息屏指令通知", "息屏状态已记录，主界面可用时生效")
             }
 
             command.contains("亮屏") -> {
-                AppConfig.saveInt(Constant.REMOTE_MASK_MODE_KEY, 0)
                 emitMonitorEvent(MonitorEvent.HideMaskCommand)
-                sendCommandReceipt("亮屏指令通知", "亮屏状态已记录，主界面可用时生效")
             }
 
             command.contains("考勤记录") -> {
@@ -302,7 +298,7 @@ class NotificationMonitorService : NotificationListenerService() {
             Constant.STAY_OVERTIME_KEY, Constant.DEFAULT_OVER_TIME
         )
         val returnScreenshot = AppConfig.loadBoolean(
-            Constant.REMOTE_CLOCK_IN_CAPTURE_KEY, false
+            Constant.REMOTE_CLOCK_IN_CAPTURE_KEY, true
         )
         // 记录远程打卡时刻，供定时任务区分"被指令代打卡"与"真的超时"
         AutomationGate.markRemoteClockInQueued()

@@ -1,5 +1,6 @@
 package com.pengxh.daily.app.ui
 
+import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -37,6 +38,7 @@ import com.pengxh.daily.app.service.FloatingWindowService
 import com.pengxh.daily.app.service.ForegroundRunningService
 import com.pengxh.daily.app.service.NotificationMonitorService
 import com.pengxh.daily.app.utils.AppConfig
+import com.pengxh.daily.app.utils.ChinaHolidayManager
 import com.pengxh.daily.app.utils.Constant
 import com.pengxh.daily.app.utils.CustomWorkdayManager
 import com.pengxh.daily.app.utils.DailyTask
@@ -50,12 +52,14 @@ import com.pengxh.daily.app.utils.TaskListState
 import com.pengxh.daily.app.utils.TaskScheduler
 import com.pengxh.daily.app.utils.WatermarkDrawable
 import com.pengxh.daily.app.vm.MainViewModel
+import com.pengxh.daily.app.widget.ChainLineDecoration
 import com.pengxh.daily.app.widget.DeletableEditText
 import com.pengxh.daily.app.widget.SettingItemView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.Locale
 
 class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
@@ -66,7 +70,7 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
     }
     private val maskViewController by lazy { MaskViewController(this, binding, insetsController) }
     private val gestureController by lazy {
-        GestureController(this, maskViewController, ::saveMaskMode)
+        GestureController(this, maskViewController, ::setMaskVisible)
     }
     private val mainViewModel: MainViewModel by viewModels()
     private val clipboard by lazy { getSystemService(ClipboardManager::class.java) }
@@ -109,7 +113,7 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
     }
 
     private fun updateToolbarTitle() {
-        val today = LocalDate.now()
+        val today = LocalDate.now(ZoneId.of(Constant.CHINA_ZONE_ID))
         binding.toolbar.title = String.format(
             Locale.CHINA,
             "%02d月%02d日 %s（%s）",
@@ -120,19 +124,34 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
         )
     }
 
+    private fun isMaskModeOn(): Boolean = AppConfig.loadInt(Constant.REMOTE_MASK_MODE_KEY, 1) == 1
+
     override fun initOnCreate(savedInstanceState: Bundle?) {
         binding.contentView.background = WatermarkDrawable(this, DailyTask.getWatermarkText())
         binding.recyclerView.adapter = dailyTaskAdapter
+        binding.recyclerView.addItemDecoration(ChainLineDecoration(this))
 
         startCoreServices()
 
         updateResetTimeText()
+
+        // 初始态读持久化存档（未存过默认开启）
+        binding.screenOffItem.switchView.isChecked = isMaskModeOn()
+        binding.screenOffItem.switchView.setOnCheckedChangeListener { _, checked ->
+            saveMaskMode(checked)
+            if (checked) "伪息屏已开启，回到首页后生效".show(this)
+            else "伪息屏已关闭，请注意！".show(this)
+        }
+        binding.screenOffItem.setOnClickListener {
+            binding.screenOffItem.switchView.toggle()
+        }
 
         // 兜底检查是否有错过的每日重置
         checkMissedReset()
     }
 
     override fun observeRequestState() {
+        observeChinaHoliday()
         observeTaskListState()
         observeMainEvents()
         observeResetCountdown()
@@ -214,6 +233,7 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
         }
     }
 
+    @SuppressLint("NotifyDataSetChanged")
     override fun onResume() {
         super.onResume()
         LogFileManager.writeLog("onResume: $packageName 回到前台")
@@ -222,6 +242,9 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
         }
         showMaskOnForeground()
         updateToolbarTitle()
+
+        // 配置页可能修改了随机时间开关/范围，回来时重绑定列表刷新 randomTimeView
+        dailyTaskAdapter.notifyDataSetChanged()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -293,6 +316,14 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
         Intent(this, ForegroundRunningService::class.java).apply { startForegroundService(this) }
     }
 
+    private fun observeChinaHoliday() {
+        lifecycleScope.launch {
+            ChinaHolidayManager.dataState.collect {
+                updateToolbarTitle()
+            }
+        }
+    }
+
     /**
      * 订阅任务列表状态 → 渲染列表与空态
      * */
@@ -305,6 +336,7 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
 
                     is TaskListState.Loaded -> {
                         dailyTaskAdapter.refresh(state.tasks)
+                        binding.taskCountView.text = state.tasks.size.toString()
                         updateEmptyState(state.tasks.isEmpty())
                     }
                 }
@@ -356,8 +388,8 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
                                 }
                             view.findViewById<MaterialButton>(R.id.cancelButton)
                                 .setOnClickListener {
-                                dialog.dismiss()
-                            }
+                                    dialog.dismiss()
+                                }
                         }
                     }
                 }
@@ -557,8 +589,7 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
         }
         val item = dailyTaskAdapter.itemAt(position) ?: return
         showCustomDialog(R.layout.dialog_delete_task) { view, dialog ->
-            view.findViewById<TextView>(R.id.textView).text =
-                "确定要删除 ${item.time} 的打卡任务吗？"
+            view.findViewById<TextView>(R.id.textView).text = "确定要删除 ${item.time} 的任务吗？"
             view.findViewById<MaterialButton>(R.id.confirmButton).setOnClickListener {
                 mainViewModel.deleteTask(item)
                 dialog.dismiss()
@@ -586,23 +617,14 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
         }
     }
 
-    /**
-     * 回到前台一律显示蒙层（省电）：
-     * 1. 不依赖 REMOTE_MASK_MODE_KEY 历史存档，避免上次手动退出蒙层后，再次回前台蒙层不显示
-     * 2. 与任务是否开启无关
-     * 3. 延迟到窗口就绪后执行，保证隐藏系统栏、降低亮度等操作生效
-     * 4. 用户仍可通过上滑手势或者音量下键退出蒙层
-     * 5. 隐藏系统栏由 setMaskVisible(true) 无条件负责，此处不再重复处理
-     * */
     private fun showMaskOnForeground() {
-        window.decorView.post { setMaskVisible(true) }
+        window.decorView.post { setMaskVisible(isMaskModeOn()) }
     }
 
     /**
      * 切换蒙层显示状态，并同步隐藏系统栏
      * */
     private fun setMaskVisible(visible: Boolean) {
-        saveMaskMode(visible)
         if (visible) {
             maskViewController.hideSystemBars()
             if (!maskViewController.isMaskVisible()) {
@@ -628,7 +650,7 @@ class MainActivity : KotlinBaseActivity<ActivityMainBinding>() {
     }
 
     private fun backToMainActivity() {
-        if (AppConfig.loadBoolean(Constant.BACK_TO_HOME_KEY, false)) {
+        if (AppConfig.loadBoolean(Constant.BACK_TO_HOME_KEY, true)) {
             //模拟点击Home键
             startActivity(Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_HOME)

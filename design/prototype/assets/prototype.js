@@ -17,7 +17,7 @@
     tasks: [
       { id: 1, time: '08:30:00', window: '08:20 – 08:40', state: 'done', actual: '08:29:47' },
       { id: 2, time: '12:30:00', window: '12:20 – 12:40', state: 'running', actual: '' },
-      { id: 3, time: '15:30:00', window: '15:20 – 15:40', state: 'failed', actual: '15:31:26' },
+      { id: 3, time: '15:30:00', window: '15:20 – 15:40', state: 'pending', actual: '' },
       { id: 4, time: '18:30:00', window: '18:20 – 18:40', state: 'pending', actual: '' }
     ],
     nextId: 4,
@@ -25,6 +25,7 @@
     editingId: null,
     sheetTimeMode: 'add',
     targetApp: 'dingtalk',
+    mask: false,
     // 消息渠道：当前生效渠道（wx | mail）与各渠道的配置完成状态
     msgChannel: 'wx',
     channelReady: { wx: true, mail: false }
@@ -149,6 +150,17 @@
   }
 
   /* ---------------------------------------------------------
+     伪息屏：持久化开关
+     首页「伪息屏」行 / 设置页开关 / 点击蒙层退出，三者状态同步
+  --------------------------------------------------------- */
+  function applyMask(on) {
+    state.mask = !!on;
+    $('#maskOverlay').hidden = !on;
+    $$('.mask-switch').forEach(function (sw) { sw.checked = on; });
+    try { localStorage.setItem('dt-mask', on ? '1' : '0'); } catch (e) { /* file:// 下可能不可用 */ }
+  }
+
+  /* ---------------------------------------------------------
      页面导航
      注意：URL 同步放在最后并做容错，file:// 直接打开时
      history.replaceState 可能抛 SecurityError，不能影响切页。
@@ -250,7 +262,7 @@
   --------------------------------------------------------- */
   const STATE_TEXT = {
     done: '已完成', running: '执行中', pending: '待执行',
-    skipped: '已跳过', failed: '失败'
+    skipped: '已跳过'
   };
 
   /* 状态图标：颜色之外再给一个形状，避免只靠颜色区分（色觉障碍友好） */
@@ -258,8 +270,7 @@
     done: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.6l4.6 4.6L19 7.4"/></svg>',
     running: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M12 3.8a8.2 8.2 0 1 1-7.9 6.1"/></svg>',
     pending: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="7.6"/></svg>',
-    skipped: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M6 6l12 12"/></svg>',
-    failed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M6.8 6.8l10.4 10.4M17.2 6.8L6.8 17.2"/></svg>'
+    skipped: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M6 6l12 12"/></svg>'
   };
 
   function renderTasks() {
@@ -288,8 +299,8 @@
       else if (st === 'running') actual = '进行中';
       else if (t.actual) actual = t.actual;
 
-      /* 失败时说清是「拉起了但没打成」，避免和成功态混淆 */
-      const actualKey = st === 'failed' ? '拉起未打卡' : '实际执行';
+      /* 失败态不做特殊设计，统一按「实际执行」表达 */
+      const actualKey = '实际执行';
 
       return '' +
         '<article class="task" data-state="' + st + '" data-id="' + t.id + '">' +
@@ -1020,6 +1031,12 @@
       }
     });
 
+    // 伪息屏：首页与设置页开关、蒙层点击退出，共用 applyMask 同步
+    $$('.mask-switch').forEach(function (sw) {
+      sw.addEventListener('change', function () { applyMask(sw.checked); });
+    });
+    $('#maskOverlay').addEventListener('click', function () { applyMask(false); });
+
     // 进入设置前先看使用须知（对齐原 App 行为）
     $('#settingsBtn').addEventListener('click', function () {
       openDialog({
@@ -1117,6 +1134,9 @@
       if (saved === 'dark') applyTheme(true);
     } catch (e) { /* 忽略 */ }
     if (/[?&]theme=dark/.test(location.search)) applyTheme(true);
+
+    // 伪息屏：本地记忆
+    try { if (localStorage.getItem('dt-mask') === '1') applyMask(true); } catch (e) { /* 忽略 */ }
 
     // 支持 #settings 之类的直达链接，便于评审时分享具体页面
     const hash = location.hash.slice(1);

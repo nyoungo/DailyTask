@@ -47,7 +47,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:divider="@drawable/divider_line"
-            android:dividerPadding="12dp"
+            android:dividerPadding="@dimen/dp_12"
             android:orientation="vertical"
             android:showDividers="middle">
 
@@ -55,10 +55,10 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:padding="12dp">
+                android:padding="@dimen/dp_12">
 
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="70dp"
                     android:layout_height="wrap_content"
                     android:text="消息标题"
                     android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
@@ -67,7 +67,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="@dimen/margin_2x"
+                    android:layout_marginStart="@dimen/margin"
                     android:text="打卡结果通知"
                     android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
                     android:textColor="@color/text_default_color" />
@@ -77,10 +77,10 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:padding="12dp">
+                android:padding="@dimen/dp_12">
 
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="70dp"
                     android:layout_height="wrap_content"
                     android:text="消息内容"
                     android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
@@ -89,7 +89,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="@dimen/margin_2x"
+                    android:layout_marginStart="@dimen/margin"
                     android:ellipsize="end"
                     android:lines="1"
                     android:text="这是来自 DailyTask 的测试消息"
@@ -101,10 +101,10 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:padding="12dp">
+                android:padding="@dimen/dp_12">
 
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="70dp"
                     android:layout_height="wrap_content"
                     android:text="Webhook"
                     android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
@@ -114,7 +114,7 @@
                     android:id="@+id/keyView"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="@dimen/margin_2x"
+                    android:layout_marginStart="@dimen/margin"
                     android:ellipsize="end"
                     android:lines="1"
                     android:textAppearance="@style/TextAppearance.Material3.BodyMedium"

@@ -76,16 +76,16 @@
                         android:id="@+id/tipsView"
                         android:layout_width="wrap_content"
                         android:layout_height="match_parent"
-                        android:layout_marginVertical="@dimen/margin"
+                        android:layout_marginBottom="@dimen/margin"
                         android:gravity="center_vertical"
-                        android:hint="点击下方按钮启动今日任务，到点后自动拉起目标应用触发极速打卡"
+                        android:hint="点击下方按钮启动任务，到点自动拉起目标应用"
                         android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
                         android:textColor="@color/text_secondary_color" />
 
                     <com.google.android.material.card.MaterialCardView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        app:cardBackgroundColor="#EAF3FF"
+                        app:cardBackgroundColor="#103399FF"
                         app:strokeWidth="0dp">
 
                         <LinearLayout
@@ -98,7 +98,7 @@
                             <com.google.android.material.card.MaterialCardView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                app:cardBackgroundColor="#D4E7FF"
+                                app:cardBackgroundColor="@color/theme_soft_color"
                                 app:cardCornerRadius="@dimen/radius_3x"
                                 app:strokeWidth="0dp">
 
@@ -112,7 +112,8 @@
                             <LinearLayout
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
-                                android:layout_marginHorizontal="@dimen/margin_2x"
+                                android:layout_marginStart="@dimen/margin"
+                                android:layout_marginEnd="@dimen/margin_2x"
                                 android:layout_weight="1"
                                 android:orientation="vertical">
 
@@ -152,7 +153,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginHorizontal="@dimen/margin_2x"
-                android:layout_marginVertical="@dimen/dp_12"
+                android:layout_marginVertical="@dimen/margin"
                 android:text="启动今日任务"
                 app:cornerRadius="@dimen/radius"
                 app:icon="@mipmap/ic_start"
@@ -160,16 +161,33 @@
                 app:iconPadding="@dimen/padding"
                 app:iconTint="@color/white" />
 
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="@dimen/margin_2x"
+                app:cardBackgroundColor="@color/white"
+                app:strokeWidth="0dp">
+
+                <com.pengxh.daily.app.widget.SettingItemView
+                    android:id="@+id/screenOffItem"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:itemDesc="开启后回到主界面自动显示伪息屏"
+                    app:itemRightType="toggle"
+                    app:itemTitle="自动伪息屏" />
+            </com.google.android.material.card.MaterialCardView>
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginHorizontal="@dimen/margin_2x"
+                android:layout_marginTop="@dimen/margin"
                 android:orientation="horizontal">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="今日任务"
+                    android:text="任务列表"
                     android:textAppearance="@style/TextAppearance.Material3.BodyMedium.Emphasized" />
 
                 <com.google.android.material.card.MaterialCardView
@@ -183,7 +201,7 @@
                         android:id="@+id/taskCountView"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:paddingHorizontal="@dimen/padding_half"
+                        android:paddingHorizontal="6dp"
                         android:text="0"
                         android:textAppearance="@style/TextAppearance.Material3.BodyMedium.Emphasized"
                         android:textColor="@color/theme_color" />
@@ -244,14 +262,28 @@
         android:background="@color/black"
         android:visibility="gone">
 
-        <TextClock
-            android:id="@+id/clockView"
+        <LinearLayout
+            android:id="@+id/clockLayout"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_centerInParent="true"
-            android:fontFamily="@font/ds_digital"
-            android:format24Hour="HH:mm"
-            android:textColor="#B3FFFFFF"
-            android:textSize="56sp" />
+            android:orientation="vertical">
+
+            <TextClock
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:fontFamily="@font/ds_digital"
+                android:format24Hour="HH:mm"
+                android:textColor="#B3FFFFFF"
+                android:textSize="56sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:text="上滑屏幕或按音量下键退出"
+                android:textColor="#B3FFFFFF" />
+        </LinearLayout>
     </RelativeLayout>
 </FrameLayout>
