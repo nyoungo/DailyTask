@@ -25,6 +25,10 @@
     editingId: null,
     sheetTimeMode: 'add',
     targetApp: 'dingtalk',
+    // 通知监听：常开服务开关（远程指令通道，钉钉时兼任结果判定）
+    notice: true,
+    // 结果来源：打卡结果判定通道（notice | capture），非钉钉强制 capture
+    source: 'notice',
     mask: false,
     // 消息渠道：当前生效渠道（wx | mail）与各渠道的配置完成状态
     msgChannel: 'wx',
@@ -63,14 +67,12 @@
     }
   }
 
-  /* 可作为打卡目标的应用（与唤起测试支持的渠道一致） */
+  /* 可作为打卡目标的应用（与真机 SettingsActivity apps 列表一致） */
   const TARGET_APPS = [
     { value: 'dingtalk', label: '钉钉', desc: '钉钉 · 极速打卡', color: '#3399FF' },
     { value: 'wxwork', label: '企业微信', desc: '企业微信 · 打卡', color: '#22C55E' },
-    { value: 'qq', label: 'QQ', desc: 'QQ · 打卡', color: '#12B7F5' },
-    { value: 'wechat', label: '微信', desc: '微信 · 打卡', color: '#07C160' },
-    { value: 'tim', label: 'TIM', desc: 'TIM · 打卡', color: '#2B7FFF' },
-    { value: 'alipay', label: '支付宝', desc: '支付宝 · 打卡', color: '#1677FF' }
+    { value: 'feishu', label: '飞书', desc: '飞书 · 打卡', color: '#00D6B9' },
+    { value: 'm3', label: '移动办公M3', desc: '移动办公M3 · 打卡', color: '#2B7FFF' }
   ];
 
   function targetAppInfo() {
@@ -86,6 +88,50 @@
     if (nameEl) nameEl.textContent = app.label;
     if (descEl) descEl.textContent = app.desc;
     if (icoEl) icoEl.style.setProperty('--ico', app.color);
+  }
+
+  /* 通知监听开关的说明文案：钉钉时兼任结果判定，非钉钉仅作远程指令通道 */
+  function renderNotice() {
+    const descEl = $('#noticeDesc');
+    if (descEl) {
+      descEl.textContent = state.targetApp === 'dingtalk'
+        ? '接收小号远程指令，并判定钉钉打卡结果'
+        : '接收小号远程指令（打卡结果由截屏判定）';
+    }
+  }
+
+  /* 结果来源联动：
+     1. 非钉钉目标 → 通知段锁定，来源强制 capture
+     2. 通知监听未开启 → 来源为 notice 时自动降级 capture
+     3. 非钉钉且通知监听未开启 → 提示远程指令不可用（建议但不阻断） */
+  function renderSource() {
+    const nonDing = state.targetApp !== 'dingtalk';
+    const noticeSeg = $('#sourceSegment .seg[data-value="notice"]');
+    const descEl = $('#sourceDesc');
+    const noteEl = $('#sourceNote');
+
+    if (noticeSeg) {
+      noticeSeg.classList.toggle('is-locked', nonDing);
+      noticeSeg.setAttribute('aria-disabled', nonDing ? 'true' : 'false');
+    }
+    if (nonDing) state.source = 'capture';
+    if (state.source === 'notice' && !state.notice) state.source = 'capture';
+
+    $$('#sourceSegment .seg').forEach(function (s) {
+      s.classList.toggle('is-active', s.dataset.value === state.source);
+    });
+
+    if (descEl) {
+      descEl.textContent = nonDing ? '非钉钉打卡结果由截屏判定' : '用哪种方式判定「打卡成功」';
+    }
+    if (noteEl) {
+      if (nonDing && !state.notice) {
+        noteEl.textContent = '通知监听未开启，小号「DT#」远程指令将无法触发打卡';
+        noteEl.hidden = false;
+      } else {
+        noteEl.hidden = true;
+      }
+    }
   }
 
   /* ---------------------------------------------------------
@@ -871,13 +917,35 @@
       $('#taskList').addEventListener(ev, function () { clearTimeout(pressTimer); });
     });
 
-    // 设置页：结果来源
+    // 设置页：结果来源（锁定段与未开通知时的 notice 段均不可选）
     $('#sourceSegment').addEventListener('click', function (e) {
       const seg = e.target.closest('.seg');
       if (!seg) return;
-      $$('#sourceSegment .seg').forEach(function (s) { s.classList.remove('is-active'); });
-      seg.classList.add('is-active');
+      if (seg.classList.contains('is-locked')) {
+        toast('非钉钉打卡结果由截屏服务判定，无法选择通知监听');
+        return;
+      }
+      if (seg.dataset.value === 'notice' && !state.notice) {
+        toast('请先开启「通知监听」');
+        return;
+      }
+      if (seg.dataset.value === state.source) return;
+      state.source = seg.dataset.value;
+      renderSource();
       toast('结果来源已切换为「' + seg.textContent.trim() + '」');
+    });
+
+    // 设置页：通知监听开关（关闭时若来源是通知则自动降级截屏）
+    $('#noticeSwitch').addEventListener('change', function () {
+      state.notice = this.checked;
+      if (!state.notice && state.source === 'notice') {
+        state.source = 'capture';
+        toast('通知监听已关闭，结果来源降级为截屏服务');
+      } else {
+        toast(state.notice ? '通知监听已开启' : '通知监听已关闭，远程指令不可用');
+      }
+      renderNotice();
+      renderSource();
     });
 
     // 消息渠道页：选择当前生效渠道（真机侧写入 MSG_CHANNEL_KEY）
@@ -975,6 +1043,8 @@
         openListSheet('选择目标应用', opts, function (v) {
           state.targetApp = v;
           renderTargetApp();
+          renderNotice();
+          renderSource();
           renderTasks();
           toast('目标应用已切换为' + targetAppInfo().label);
         });
@@ -1121,6 +1191,8 @@
     renderRunState();
     renderWorkday();
     renderTargetApp();
+    renderNotice();
+    renderSource();
     renderChannel();
     tickClock();
     tickCountdown();

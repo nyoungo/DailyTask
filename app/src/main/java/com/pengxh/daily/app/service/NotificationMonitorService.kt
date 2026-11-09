@@ -8,6 +8,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.pengxh.daily.app.events.MonitorEvent
+import com.pengxh.daily.app.extensions.notificationEnable
 import com.pengxh.daily.app.extensions.openApplication
 import com.pengxh.daily.app.extensions.show
 import com.pengxh.daily.app.extensions.timestampToCompleteDate
@@ -78,6 +79,7 @@ class NotificationMonitorService : NotificationListenerService() {
     override fun onListenerConnected() {
         listenerConnected = true
         emitListenerState(true)
+        AppConfig.saveLong(Constant.NOTIFICATION_FAIL_NOTIFY_TIME_KEY, 0L)
         cleanupOldNoticesIfNeeded()
     }
 
@@ -265,11 +267,13 @@ class NotificationMonitorService : NotificationListenerService() {
                     appendLine("通知监听：${if (listenerConnected) "正常" else "断开"}")
                     appendLine("截图服务：${if (ProjectionSession.isStateActive()) "正常" else "断开"}")
                     append(
-                        "消息渠道：${when (type) {
-                            0 -> "QQ邮箱"
-                            1 -> "企业微信"
-                            else -> "未配置"
-                        }}"
+                        "消息渠道：${
+                            when (type) {
+                                0 -> "QQ邮箱"
+                                1 -> "企业微信"
+                                else -> "未配置"
+                            }
+                        }"
                     )
                 }
                 sendCommandReceipt("状态查询通知", content)
@@ -411,8 +415,16 @@ class NotificationMonitorService : NotificationListenerService() {
     override fun onListenerDisconnected() {
         listenerConnected = false
         emitListenerState(false)
-        // 主动请求系统重新绑定监听服务
-        requestRebind(ComponentName(this, NotificationMonitorService::class.java))
+        runCatching {
+            requestRebind(ComponentName(this, NotificationMonitorService::class.java))
+        }
+        // rebind 无效（通常意味着使用权已被撤销）再告警
+        serviceScope.launch {
+            delay(5000)
+            if (!notificationEnable()) {
+                MessageDispatcher.sendNotificationDownAlert()
+            }
+        }
     }
 
     override fun onDestroy() {
